@@ -314,7 +314,7 @@ export default function ScalataPro({ session }) {
 
   const cfg = SCALATA_TYPES[tipo]
   const activeCfg = scalataAttiva ? SCALATA_TYPES[scalataAttiva.tipo] : null
-  const isValid = capitale > 10 && obiettivo > capitale
+  const isValid = capitale >= 1 && obiettivo > capitale
   const profitPct = scalataAttiva ? Math.min(100,Math.max(0,((scalataAttiva.bankrollCorrente-scalataAttiva.capitale)/(scalataAttiva.obiettivo-scalataAttiva.capitale))*100)) : 0
 
   const TABS = [

@@ -1,47 +1,35 @@
-// api/odds.js — Vercel Serverless Function
-// Proxy per nascondere la Odds API key dal frontend
-
+// api/odds.js
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  if (req.method === 'OPTIONS') return res.status(200).end()
 
-  const { sport, quotaMin, quotaMax } = req.query;
-  if (!sport) return res.status(400).json({ error: 'sport required' });
-
-  const apiKey = process.env.ODDS_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key non configurata' });
+  const { sport, quotaMin, quotaMax } = req.query
+  const apiKey = process.env.ODDS_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ODDS_API_KEY mancante' })
 
   try {
-    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${apiKey}&regions=eu&markets=h2h&oddsFormat=decimal`;
-    const upstream = await fetch(url);
-    const remaining = upstream.headers.get('x-requests-remaining');
+    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${apiKey}&regions=eu&markets=h2h&oddsFormat=decimal`
+    const upstream = await fetch(url)
+    if (!upstream.ok) throw new Error(`Odds API ${upstream.status}`)
+    const data = await upstream.json()
 
-    if (!upstream.ok) {
-      return res.status(upstream.status).json({ error: `Odds API error ${upstream.status}` });
-    }
-
-    const data = await upstream.json();
-
-    // Filtra per range quote lato server
-    const min = parseFloat(quotaMin) || 0;
-    const max = parseFloat(quotaMax) || 99;
-    const seen = new Set();
-    const filtered = [];
+    const min = parseFloat(quotaMin) || 1.0
+    const max = parseFloat(quotaMax) || 10.0
+    const seen = new Set()
+    const filtered = []
 
     for (const game of data) {
-      if (!game.bookmakers?.length) continue;
-      if (new Date(game.commence_time) < new Date()) continue;
+      if (!game.bookmakers?.length || new Date(game.commence_time) < new Date()) continue
       for (const bm of game.bookmakers) {
-        const h2h = bm.markets?.find(m => m.key === 'h2h');
-        if (!h2h) continue;
+        const h2h = bm.markets?.find(m => m.key === 'h2h')
+        if (!h2h) continue
         for (const outcome of h2h.outcomes) {
-          const q = outcome.price;
-          if (q < min || q > max) continue;
-          const k = `${game.home_team}_${game.away_team}_${outcome.name}`;
-          if (seen.has(k)) continue;
-          seen.add(k);
+          const q = outcome.price
+          if (q < min || q > max) continue
+          const k = `${game.home_team}_${game.away_team}_${outcome.name}`
+          if (seen.has(k)) continue
+          seen.add(k)
           filtered.push({
             id: `${game.id}_${outcome.name}_${bm.key}`,
             home: game.home_team,
@@ -50,17 +38,16 @@ export default async function handler(req, res) {
             bookmaker: bm.title,
             esito: outcome.name,
             quota: q,
-          });
+          })
         }
       }
     }
 
-    const media = (min + max) / 2;
-    filtered.sort((a, b) => Math.abs(a.quota - media) - Math.abs(b.quota - media));
-
-    res.setHeader('x-requests-remaining', remaining || '');
-    return res.status(200).json(filtered.slice(0, 15));
+    const media = (min + max) / 2
+    filtered.sort((a, b) => Math.abs(a.quota - media) - Math.abs(b.quota - media))
+    res.setHeader('x-requests-remaining', upstream.headers.get('x-requests-remaining') || '')
+    return res.status(200).json(filtered.slice(0, 30))
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.message })
   }
 }

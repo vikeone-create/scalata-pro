@@ -1,129 +1,60 @@
-# ScalataPro AI 🎯
+# ScalataPro v2
 
-Strumento educativo per la gestione delle scalate betting con analisi AI, quote live e storico per utente.
+## Env vars da aggiungere su Vercel
 
-> ⚠️ **Solo uso educativo** · Non costituisce invito al gioco · Il gioco d'azzardo può creare dipendenza
+| Nome | Valore |
+|------|--------|
+| `VITE_SUPABASE_URL` | `https://xxx.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | `sb_publishable_...` |
+| `SUPABASE_SERVICE_KEY` | La **service_role** key (da Supabase → Settings → API → Secret keys) |
+| `ODDS_API_KEY` | `545203a15fce5f578d1da8b69c02f21a` |
+| `ANTHROPIC_API_KEY` | `sk-ant-...` |
+| `VITE_ADMIN_EMAIL` | La tua email (quella con cui ti sei registrato) |
+| `ADMIN_EMAIL` | Stessa email sopra |
+| `VITE_APP_URL` | `https://scalata-pro.vercel.app` |
 
----
-
-## Stack
-
-- **React + Vite** — frontend
-- **Supabase** — autenticazione + database per utente
-- **Vercel** — deploy + serverless function proxy (API key nascosta)
-- **The Odds API** — quote live reali
-- **Claude AI** — analisi partite con web search
-
----
-
-## Setup in 5 step
-
-### 1. Supabase — crea il progetto
-
-1. Vai su [supabase.com](https://supabase.com) → **New Project**
-2. Vai su **SQL Editor** e incolla questo:
+## SQL da eseguire su Supabase (SQL Editor)
 
 ```sql
-create table scalata_data (
+create table invite_links (
+  id uuid primary key default gen_random_uuid(),
+  code text unique not null,
+  created_by uuid references auth.users(id),
+  used_by uuid references auth.users(id),
+  used_at timestamptz,
+  created_at timestamptz default now()
+);
+
+create table user_data (
   user_id uuid primary key references auth.users(id) on delete cascade,
   scalata_attiva jsonb,
   storico jsonb default '[]'::jsonb,
-  analysis_cache jsonb default '{}'::jsonb,
   updated_at timestamptz default now()
 );
 
--- Sicurezza: ogni utente vede solo i propri dati
-alter table scalata_data enable row level security;
+alter table invite_links enable row level security;
+alter table user_data enable row level security;
 
-create policy "Utente vede solo i suoi dati"
-  on scalata_data for all
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+create policy "Leggi invite" on invite_links for select using (true);
+create policy "Utente dati" on user_data for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
 ```
 
-3. Vai su **Authentication → Providers** → abilita **Google** (opzionale ma consigliato)
-4. Copia da **Settings → API**:
-   - `Project URL`
-   - `anon public key`
-
-### 2. Variabili d'ambiente
-
-Copia `.env.example` in `.env` e compila:
-
-```bash
-cp .env.example .env
-```
-
-```env
-VITE_SUPABASE_URL=https://tuoprogetto.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
-ODDS_API_KEY=545203a15fce5f578d1da8b69c02f21a
-```
-
-### 3. Installa e testa in locale
+## Deploy
 
 ```bash
 npm install
-npm run dev
+git add .
+git commit -m "v2 - refactor completo"
+git push
 ```
 
-Apri [http://localhost:5173](http://localhost:5173)
+Vercel si aggiorna automaticamente.
 
-### 4. Deploy su Vercel
+## Come usare i link invito
 
-```bash
-# Installa Vercel CLI se non ce l'hai
-npm i -g vercel
-
-# Deploy
-vercel
-
-# Segui le istruzioni, poi aggiungi le env vars:
-vercel env add VITE_SUPABASE_URL
-vercel env add VITE_SUPABASE_ANON_KEY
-vercel env add ODDS_API_KEY
-
-# Re-deploy con le variabili
-vercel --prod
-```
-
-In alternativa: collega il repo GitHub su [vercel.com](https://vercel.com) e aggiungi le env vars dalla dashboard.
-
-### 5. Configura Google OAuth (opzionale)
-
-In Supabase → **Authentication → URL Configuration**:
-- Site URL: `https://tuosito.vercel.app`
-- Redirect URLs: `https://tuosito.vercel.app/**`
-
----
-
-## Struttura progetto
-
-```
-scalata-pro/
-├── api/
-│   └── odds.js          ← Vercel serverless proxy (nasconde API key)
-├── src/
-│   ├── main.jsx         ← Entry point
-│   ├── App.jsx          ← Routing + auth guard
-│   ├── Login.jsx        ← Pagina login (email/password, magic link, Google)
-│   ├── ScalataPro.jsx   ← App principale
-│   └── supabase.js      ← Client Supabase
-├── index.html
-├── vite.config.js
-├── vercel.json
-├── .env.example
-└── package.json
-```
-
----
-
-## Funzionalità
-
-- ✅ Login con email/password, magic link, Google
-- ✅ Dati sincronizzati per utente su Supabase
-- ✅ Quote live reali da bookmaker europei (filtrate per tipo scalata)
-- ✅ API key Odds nascosta lato server (Vercel Function)
-- ✅ Analisi AI partite: notizie, forma, value bet, rating 1-10
-- ✅ Storico scalate con statistiche globali
-- ✅ UI glassmorphism warm amber responsive
+1. Accedi con la tua email admin
+2. Vai sul tab Admin (⭐ in basso)
+3. Clicca "Crea nuovo link invito"
+4. Copia il link e mandalo all'amico
+5. L'amico apre il link e si registra

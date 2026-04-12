@@ -1,42 +1,57 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { supabase } from './supabase'
-import Login from './Login'
-import ScalataPro from './ScalataPro'
+import Login from './pages/Login'
+import Scalata from './pages/Scalata'
+import Storico from './pages/Storico'
+import Admin from './pages/Admin'
+import Layout from './components/Layout'
+
+function InviteRedirect() {
+  const { code } = useParams()
+  return <Login inviteCode={code} />
+}
 
 export default function App() {
-  const [session, setSession] = useState(undefined) // undefined = loading
+  const [session, setSession] = useState(undefined)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-    })
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, s) => setSession(s))
     return () => subscription.unsubscribe()
   }, [])
 
-  // Loading splash
-  if (session === undefined) {
-    return (
-      <div style={{ minHeight: '100vh', background: 'linear-gradient(160deg,#2a1500 0%,#1c0e00 50%,#0f1a08 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
-        <div style={{ fontSize: 28, fontFamily: 'DM Serif Display, Georgia, serif', color: '#fef3c7', fontWeight: 400 }}>Scalata<span style={{ color: '#f59e0b' }}>Pro</span></div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', opacity: 0.6, animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-          ))}
-        </div>
-        <style>{`@keyframes pulse{0%,100%{transform:scale(1);opacity:0.3}50%{transform:scale(1.5);opacity:1}}`}</style>
-      </div>
-    )
-  }
+  if (session === undefined) return <Splash />
 
   return (
     <Routes>
+      <Route path="/invite/:code" element={<InviteRedirect />} />
       <Route path="/login" element={!session ? <Login /> : <Navigate to="/" replace />} />
-      <Route path="/" element={session ? <ScalataPro session={session} /> : <Navigate to="/login" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {session ? (
+        <Route element={<Layout session={session} />}>
+          <Route path="/" element={<Scalata session={session} />} />
+          <Route path="/storico" element={<Storico session={session} />} />
+          <Route path="/admin" element={<Admin session={session} />} />
+        </Route>
+      ) : (
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      )}
     </Routes>
+  )
+}
+
+function Splash() {
+  return (
+    <div style={{ minHeight:'100vh', background:'#0c0c0c', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:20 }}>
+      <div style={{ fontFamily:'DM Serif Display,serif', fontSize:32, color:'#f5f0e8', letterSpacing:1 }}>
+        Scalata<span style={{ color:'#c9a84c' }}>Pro</span>
+      </div>
+      <div style={{ display:'flex', gap:6 }}>
+        {[0,1,2].map(i => (
+          <div key={i} style={{ width:6, height:6, borderRadius:'50%', background:'#c9a84c', animation:`pulse 1.2s ${i*0.2}s ease-in-out infinite` }} />
+        ))}
+      </div>
+      <style>{`@keyframes pulse{0%,100%{opacity:0.2;transform:scale(1)}50%{opacity:1;transform:scale(1.4)}}`}</style>
+    </div>
   )
 }

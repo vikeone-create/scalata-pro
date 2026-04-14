@@ -229,11 +229,12 @@ export default async function handler(req, res) {
         const homeModel = mapTeam(f.home)
         const awayModel = mapTeam(f.away)
 
-        // Dati paralleli
-        const [lastHome, lastAway, injuries, bestOdds, betfairOdds] = await Promise.all([
+        // Dati paralleli: aggiungiamo H2H
+        const [lastHome, lastAway, injuries, h2h, bestOdds, betfairOdds] = await Promise.all([
           fb('fixtures', { team:f.homeId, last:8 }),
           fb('fixtures', { team:f.awayId, last:8 }),
           fb('injuries', { fixture:f.fixtureId }),
+          fb('fixtures/headtohead', { h2h:`${f.homeId}-${f.awayId}`, last:5 }),
           getBestOdds(f.home, f.away, today),
           getBetfairOdds(f.home, f.away, today, betfairToken),
         ])
@@ -248,10 +249,34 @@ export default async function handler(req, res) {
         const homeForm = processForm(lastHome, f.homeId)
         const awayForm = processForm(lastAway, f.awayId)
 
-        // Poisson
+        // Calcola giorni dall'ultima partita (stanchezza)
+        const daysSinceLastHome = lastHome[0]?.fixture?.date
+          ? Math.floor((Date.now() - new Date(lastHome[0].fixture.date)) / 86400000)
+          : 7
+        const daysSinceLastAway = lastAway[0]?.fixture?.date
+          ? Math.floor((Date.now() - new Date(lastAway[0].fixture.date)) / 86400000)
+          : 7
+
+        // Poisson v2 con tutti i parametri
         const poissonRes = await fetch(`${APP_URL}/api/poisson`, {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ home:homeModel, away:awayModel, homeForm, awayForm, withContext:true }),
+          body: JSON.stringify({
+            home: homeModel,
+            away: awayModel,
+            leagueName: f.league,
+            homeForm,
+            awayForm,
+            h2h: h2h.map(g => ({
+              home: g.teams?.home?.name,
+              away: g.teams?.away?.name,
+              score: { home: g.goals?.home, away: g.goals?.away },
+            })),
+            homeInjuries: injuries.filter(i => i.team?.id === f.homeId),
+            awayInjuries: injuries.filter(i => i.team?.id === f.awayId),
+            homeDaysRest: daysSinceLastHome,
+            awayDaysRest: daysSinceLastAway,
+            withContext: true,
+          }),
         })
         if (!poissonRes.ok) { console.warn(`[CRON] Poisson skip ${f.home}`); continue }
         const poisson = await poissonRes.json()

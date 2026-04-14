@@ -15,9 +15,10 @@ export default async function handler(req, res) {
   const TYPES = {
     aggressiva: { label: 'Aggressiva', quotaMin: 2.3, quotaMax: 3.5 },
     normale:    { label: 'Normale',    quotaMin: 1.6, quotaMax: 2.2 },
-    sicura:     { label: 'Sicura',     quotaMin: 1.1, quotaMax: 1.5 },
+    sicura:       { label: 'Sicura',       quotaMin: 1.1, quotaMax: 1.5 },
+    molto_sicura: { label: 'Molto sicura', quotaMin: 1.05, quotaMax: 1.4 },
   }
-  const cfg = TYPES[scalataType]
+  const cfg = TYPES[scalataType] || TYPES['normale']
 
   const matchList = matches.slice(0, 15).map((m, i) =>
     `${i+1}. ${m.home} vs ${m.away} | Esito: ${m.esito} | Quota: ${m.quota} | ${m.bookmaker} | ${new Date(m.commence).toLocaleDateString('it-IT')}`

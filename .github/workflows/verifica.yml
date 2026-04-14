@@ -1,0 +1,25 @@
+name: Verifica Risultati
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 02:00 ora italiana ogni notte
+  workflow_dispatch:
+
+jobs:
+  verifica:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verifica risultati di ieri
+        run: |
+          echo "Avvio verifica risultati..."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron-verifica")
+          echo "Status: $RESPONSE"
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Errore: status $RESPONSE"
+            exit 1
+          fi
+          echo "Verifica completata"

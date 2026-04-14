@@ -1,20 +1,27 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
+import { T, GLOBAL_CSS } from '../theme'
 
 const SPORTS = [
-  { key: 'soccer_italy_serie_a', label: 'Serie A' },
-  { key: 'soccer_epl', label: 'Premier League' },
-  { key: 'soccer_spain_la_liga', label: 'La Liga' },
-  { key: 'soccer_germany_bundesliga', label: 'Bundesliga' },
-  { key: 'soccer_uefa_champs_league', label: 'Champions League' },
+  { key: 'soccer_italy_serie_a',        label: '🇮🇹 Serie A' },
+  { key: 'soccer_epl',                   label: '🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League' },
+  { key: 'soccer_spain_la_liga',         label: '🇪🇸 La Liga' },
+  { key: 'soccer_germany_bundesliga',    label: '🇩🇪 Bundesliga' },
+  { key: 'soccer_uefa_champs_league',    label: '🏆 Champions League' },
 ]
+const N_GIOCATE = [3, 5, 8, 12]
 
-const PROFILI = [
-  { id: 'x2', label: 'Raddoppia', desc: 'Obiettivo ×2', mult: 2, tipo: 'sicura', quotaMin: 1.1, quotaMax: 1.5, icon: '×2' },
-  { id: 'x3', label: 'Triplica', desc: 'Obiettivo ×3', mult: 3, tipo: 'normale', quotaMin: 1.6, quotaMax: 2.2, icon: '×3' },
-  { id: 'x5', label: 'Quintuplica', desc: 'Obiettivo ×5', mult: 5, tipo: 'aggressiva', quotaMin: 2.3, quotaMax: 3.5, icon: '×5' },
-]
-
+function calcQuotaMedia(c, o, n) { return Math.pow(o / c, 1 / n) }
+function classificaTipo(q) {
+  if (q >= 2.3) return { tipo: 'aggressiva', label: 'Aggressiva', tag: 'ALTO RISCHIO', color: T.red }
+  if (q >= 1.6) return { tipo: 'normale',    label: 'Normale',    tag: 'BILANCIATA',  color: T.gold }
+  if (q >= 1.3) return { tipo: 'sicura',     label: 'Sicura',     tag: 'BASSO RISCHIO', color: T.green }
+  return               { tipo: 'molto_sicura', label: 'Molto sicura', tag: 'MOLTO SICURA', color: T.green }
+}
+function rangeQuote(q) {
+  const s = q < 1.5 ? 0.15 : q < 2.0 ? 0.3 : 0.5
+  return { min: Math.max(1.05, +(q - s).toFixed(2)), max: +(q + s).toFixed(2) }
+}
 function calcScalata(capitale, obiettivo, quotaMedia) {
   const steps = [], profitTarget = obiettivo - capitale
   let profitoCumulato = 0, bankroll = capitale
@@ -24,16 +31,14 @@ function calcScalata(capitale, obiettivo, quotaMedia) {
     if (importo > bankroll) importo = bankroll
     const vincita = +(importo * quotaMedia).toFixed(2)
     profitoCumulato += vincita - importo
-    steps.push({ step:i+1, importo:+importo.toFixed(2), quota:quotaMedia, vincita, profitoPrevisto:+profitoCumulato.toFixed(2), bankrollSeVince:+(bankroll-importo+vincita).toFixed(2), bankrollSePerde:+(bankroll-importo).toFixed(2), done:false, esito:null })
+    steps.push({ step: i + 1, importo: +importo.toFixed(2), quota: +quotaMedia.toFixed(2), vincita, profitoPrevisto: +profitoCumulato.toFixed(2), bankrollSeVince: +(bankroll - importo + vincita).toFixed(2), bankrollSePerde: +(bankroll - importo).toFixed(2), done: false, esito: null })
     if (profitoCumulato >= profitTarget) break
   }
   return steps
 }
 
 const fmt = n => `€${Number(n).toFixed(2)}`
-const fmtDate = d => new Date(d).toLocaleDateString('it-IT', { weekday:'short', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })
-
-const verdettoBg = v => ({ OTTIMA:'#86efac', BUONA:'#f59e0b', ACCETTABILE:'#fb923c' }[v] || '#888')
+const fmtDate = d => new Date(d).toLocaleDateString('it-IT', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
 async function loadData(userId) {
   const { data } = await supabase.from('user_data').select('*').eq('user_id', userId).single()
@@ -43,31 +48,31 @@ async function saveData(userId, patch) {
   await supabase.from('user_data').upsert({ user_id: userId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
 }
 
-// ── UI atoms
-const C = {
-  page: { maxWidth:480, margin:'0 auto', padding:'24px 16px' },
-  h: { fontFamily:'DM Serif Display,serif' },
-  card: (border) => ({ background:'rgba(255,255,255,0.03)', border:`1px solid ${border||'rgba(255,255,255,0.07)'}`, borderRadius:16, overflow:'hidden' }),
-  label: { fontSize:10, color:'rgba(245,240,232,0.35)', letterSpacing:3, textTransform:'uppercase', marginBottom:8 },
-  gold: '#c9a84c',
+function Spinner({ msg }) {
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 24, padding: 24 }}>
+      <div style={{ width: 52, height: 52, borderRadius: '50%', border: `2px solid ${T.cyan}18`, borderTop: `2px solid ${T.cyan}`, animation: 'spin 1s linear infinite' }} />
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ ...T.orb, fontSize: 16, color: T.text, marginBottom: 8 }}>Preparando la scalata</div>
+        <div style={{ ...T.sg, fontSize: 13, color: 'rgba(245,240,232,0.35)' }}>{msg}</div>
+      </div>
+    </div>
+  )
 }
 
 export default function Scalata({ session }) {
   const userId = session?.user?.id
-
-  // State
-  const [fase, setFase] = useState('setup') // setup | caricamento | scalata
-  const [profilo, setProfilo] = useState(null)
-  const [capitale, setCapitale] = useState('')
-  const [sport, setSport] = useState('soccer_italy_serie_a')
+  const [fase, setFase]           = useState('setup')
+  const [capitale, setCapitale]   = useState('')
+  const [obiettivo, setObiettivo] = useState('')
+  const [nGiocate, setNGiocate]   = useState(null)
+  const [sport, setSport]         = useState('soccer_italy_serie_a')
   const [scalataAttiva, setScalataAttiva] = useState(null)
   const [partiteConsigliate, setPartiteConsigliate] = useState([])
-  const [loading, setLoading] = useState(false)
   const [loadingMsg, setLoadingMsg] = useState('')
-  const [error, setError] = useState(null)
+  const [error, setError]         = useState(null)
   const [selectedForStep, setSelectedForStep] = useState({})
 
-  // Load from Supabase
   useEffect(() => {
     if (!userId) return
     loadData(userId).then(d => {
@@ -79,347 +84,310 @@ export default function Scalata({ session }) {
     })
   }, [userId])
 
-  const persist = (patch) => saveData(userId, patch)
+  const persist = patch => saveData(userId, patch)
+  const cap = Number(capitale), obj = Number(obiettivo)
+  const isValido = cap >= 1 && obj > cap && nGiocate !== null
+  const opzioni = N_GIOCATE.map(n => {
+    const quota = calcQuotaMedia(cap || 1, obj || 2, n)
+    return { n, quota, tipo: classificaTipo(quota), range: rangeQuote(quota) }
+  })
 
   const avvia = async () => {
-    if (!profilo || !capitale || Number(capitale) < 1) return setError('Inserisci un capitale valido')
-    setError(null)
-    setLoading(true)
-    setFase('caricamento')
-
+    if (!isValido) return
+    setError(null); setFase('caricamento')
+    const opz = opzioni.find(o => o.n === nGiocate)
     try {
-      const p = PROFILI.find(x => x.id === profilo)
-      const obiettivo = Number(capitale) * p.mult
-      const quotaMedia = +((p.quotaMin + p.quotaMax) / 2).toFixed(2)
-
-      // 1. Fetch odds
+      const quotaMedia = +opz.quota.toFixed(2)
       setLoadingMsg('Raccolta quote live...')
-      const oddsRes = await fetch(`/api/odds?sport=${sport}&quotaMin=${p.quotaMin}&quotaMax=${p.quotaMax}`)
+      const oddsRes = await fetch(`/api/odds?sport=${sport}&quotaMin=${opz.range.min}&quotaMax=${opz.range.max}`)
       const odds = await oddsRes.json()
-      if (!odds?.length) throw new Error('Nessuna partita disponibile per questo profilo. Prova un altro campionato o torna più tardi.')
-
-      // 2. AI analysis
+      if (!odds?.length) throw new Error('Nessuna partita disponibile. Prova un campionato o numero giocate diverso.')
       setLoadingMsg('Analisi AI delle partite...')
       const aiRes = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: odds, scalataType: p.tipo, capitale: Number(capitale), obiettivo }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matches: odds, scalataType: opz.tipo.tipo, capitale: cap, obiettivo: obj }),
       })
       const aiData = await aiRes.json()
       if (!aiRes.ok) throw new Error(aiData.error || 'Errore analisi AI')
-
-      const consigliate = aiData.partite_consigliate || []
-
-      // 3. Build scalata
       const scalata = {
-        id: Date.now(),
-        profilo: p.id,
-        tipo: p.tipo,
-        capitale: Number(capitale),
-        obiettivo,
-        quotaMedia,
-        steps: calcScalata(Number(capitale), obiettivo, quotaMedia),
-        stepCorrente: 0,
-        bankrollCorrente: Number(capitale),
-        createdAt: new Date().toISOString(),
-        status: 'attiva',
-        partiteConsigliate: consigliate,
-        sport,
+        id: Date.now(), tipo: opz.tipo.tipo, tipoLabel: opz.tipo.label,
+        capitale: cap, obiettivo: obj, nGiocate, quotaMedia,
+        profitTarget: obj - cap,
+        steps: calcScalata(cap, obj, quotaMedia),
+        stepCorrente: 0, bankrollCorrente: cap,
+        createdAt: new Date().toISOString(), status: 'attiva',
+        partiteConsigliate: aiData.partite_consigliate || [], sport,
       }
-
-      setScalataAttiva(scalata)
-      setPartiteConsigliate(consigliate)
-      persist({ scalata_attiva: scalata })
-      setFase('scalata')
-    } catch(e) {
-      setError(e.message)
-      setFase('setup')
-    }
-    setLoading(false)
+      setScalataAttiva(scalata); setPartiteConsigliate(aiData.partite_consigliate || [])
+      persist({ scalata_attiva: scalata }); setFase('scalata')
+    } catch(e) { setError(e.message); setFase('setup') }
     setLoadingMsg('')
   }
 
   const registraEsito = (stepIndex, esito, matchUsato) => {
-    const steps = scalataAttiva.steps.map((s, i) =>
-      i === stepIndex ? { ...s, done:true, esito, timestamp:new Date().toISOString(), matchUsato } : s
-    )
+    const steps = scalataAttiva.steps.map((s, i) => i === stepIndex ? { ...s, done: true, esito, timestamp: new Date().toISOString(), matchUsato } : s)
     const step = steps[stepIndex]
     const bankrollCorrente = esito === 'vinto' ? step.bankrollSeVince : step.bankrollSePerde
     const stepCorrente = stepIndex + 1
     let status = 'attiva'
-    if (esito === 'vinto' && step.profitoPrevisto >= scalataAttiva.profitTarget || (esito === 'vinto' && bankrollCorrente >= scalataAttiva.obiettivo)) status = 'completata'
+    if (esito === 'vinto' && bankrollCorrente >= scalataAttiva.obiettivo) status = 'completata'
     else if (esito === 'perso' && (bankrollCorrente <= 0 || stepCorrente >= steps.length)) status = 'fallita'
-
     const updated = { ...scalataAttiva, steps, stepCorrente, bankrollCorrente, status }
-    setScalataAttiva(updated)
-    persist({ scalata_attiva: updated })
-
+    setScalataAttiva(updated); persist({ scalata_attiva: updated })
     if (status !== 'attiva') {
       const closed = { ...updated, closedAt: new Date().toISOString() }
-      // Move to storico
       loadData(userId).then(d => {
-        const storico = d?.storico || []
-        const ns = [closed, ...storico].slice(0, 100)
-        persist({ storico: ns, scalata_attiva: null })
+        persist({ storico: [closed, ...(d?.storico || [])].slice(0, 100), scalata_attiva: null })
       })
-      setTimeout(() => { setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setProfilo(null); setCapitale('') }, 1200)
+      setTimeout(() => { setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setNGiocate(null); setCapitale(''); setObiettivo('') }, 1200)
     }
   }
 
   const abbandonaScalata = async () => {
     if (!confirm('Abbandonare la scalata?')) return
-    const closed = { ...scalataAttiva, status:'abbandonata', closedAt:new Date().toISOString() }
+    const closed = { ...scalataAttiva, status: 'abbandonata', closedAt: new Date().toISOString() }
     const d = await loadData(userId)
-    const storico = d?.storico || []
-    const ns = [closed, ...storico].slice(0, 100)
-    persist({ storico: ns, scalata_attiva: null })
-    setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setProfilo(null); setCapitale('')
+    persist({ storico: [closed, ...(d?.storico || [])].slice(0, 100), scalata_attiva: null })
+    setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setNGiocate(null); setCapitale(''); setObiettivo('')
   }
 
-  const profCorrente = PROFILI.find(x => x.id === scalataAttiva?.profilo)
   const stepIdx = scalataAttiva?.stepCorrente || 0
   const stepCorrente = scalataAttiva?.steps?.[stepIdx]
   const profitPct = scalataAttiva ? Math.min(100, Math.max(0, ((scalataAttiva.bankrollCorrente - scalataAttiva.capitale) / (scalataAttiva.obiettivo - scalataAttiva.capitale)) * 100)) : 0
 
-  // ── FASE CARICAMENTO
-  if (fase === 'caricamento') return (
-    <div style={{ minHeight:'100vh', background:'#0c0c0c', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:24, padding:24 }}>
-      <div style={{ width:60, height:60, borderRadius:'50%', border:'2px solid rgba(201,168,76,0.2)', borderTop:`2px solid ${C.gold}`, animation:'spin 1s linear infinite' }} />
-      <div style={{ textAlign:'center' }}>
-        <div style={{ fontFamily:'DM Serif Display,serif', fontSize:20, color:'#f5f0e8', marginBottom:8 }}>Preparando la scalata</div>
-        <div style={{ fontSize:13, color:'rgba(245,240,232,0.4)' }}>{loadingMsg}</div>
-      </div>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  )
+  if (fase === 'caricamento') return <Spinner msg={loadingMsg} />
 
-  // ── FASE SETUP
+  // ── SETUP ──
   if (fase === 'setup') return (
-    <div style={{ minHeight:'100vh', background:'#0c0c0c' }}>
-      <div style={C.page}>
-        {/* Header */}
-        <div style={{ marginBottom:32 }}>
-          <div style={{ ...C.h, fontSize:28, color:'#f5f0e8', fontWeight:400, letterSpacing:0.5 }}>
-            Scalata<span style={{ color:C.gold }}>Pro</span>
+    <div style={{ minHeight: '100vh', background: T.bg }}>
+      <style>{GLOBAL_CSS}</style>
+      {/* Ambient glows */}
+      <div style={{ position: 'fixed', top: 0, right: 0, width: 250, height: 250, background: `radial-gradient(circle, ${T.cyan}0a 0%, transparent 70%)`, pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', bottom: '20%', left: 0, width: 200, height: 200, background: `radial-gradient(circle, ${T.purple}08 0%, transparent 70%)`, pointerEvents: 'none' }} />
+
+      <div style={T.page}>
+        <div style={{ marginBottom: 28, animation: 'fadeUp 0.3s ease' }}>
+          <div style={{ ...T.orb, fontSize: 26, fontWeight: 700, letterSpacing: 2 }}>
+            <span style={{ color: T.text }}>SCALATA</span>
+            <span style={{ background: `linear-gradient(135deg, ${T.cyan}, ${T.purple})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>PRO</span>
           </div>
-          <div style={{ fontSize:12, color:'rgba(245,240,232,0.3)', marginTop:4 }}>Scegli il tuo profilo e inizia</div>
+          <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.25)', marginTop: 4 }}>Imposta la tua scalata</div>
         </div>
 
-        {/* Profili */}
-        <div style={{ marginBottom:28 }}>
-          <div style={C.label}>Profilo di gioco</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-            {PROFILI.map(p => (
-              <button key={p.id} onClick={() => setProfilo(p.id)} style={{ width:'100%', padding:'16px 20px', border:`1px solid ${profilo===p.id ? C.gold+'88' : 'rgba(255,255,255,0.07)'}`, borderRadius:14, background: profilo===p.id ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.02)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'space-between', transition:'all 0.15s' }}>
-                <div style={{ textAlign:'left' }}>
-                  <div style={{ fontSize:15, fontWeight:600, color: profilo===p.id ? '#f5f0e8' : 'rgba(245,240,232,0.6)', fontFamily:'DM Sans,sans-serif' }}>{p.label}</div>
-                  <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)', marginTop:2 }}>{p.desc} · Quote {p.quotaMin}–{p.quotaMax}</div>
-                </div>
-                <div style={{ fontSize:24, fontWeight:700, color: profilo===p.id ? C.gold : 'rgba(245,240,232,0.2)', fontFamily:'DM Serif Display,serif' }}>{p.icon}</div>
-              </button>
-            ))}
+        {scalataAttiva && (
+          <div style={{ ...T.cardGlow(T.cyan), padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ ...T.sg, fontSize: 12, color: T.cyan }}>Hai una scalata in corso</span>
+            <button onClick={() => setFase('scalata')} style={{ background: `${T.cyan}18`, border: `1px solid ${T.cyan}40`, borderRadius: 8, color: T.cyan, ...T.sg, fontSize: 11, padding: '5px 12px', cursor: 'pointer', fontWeight: 600 }}>Vai →</button>
           </div>
-        </div>
+        )}
 
         {/* Capitale */}
-        <div style={{ marginBottom:20 }}>
-          <div style={C.label}>Capitale iniziale (€)</div>
-          <input
-            type="number" value={capitale} min={1}
-            onChange={e => setCapitale(e.target.value)}
-            placeholder="Es. 50"
-            style={{ width:'100%', padding:'16px 18px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:14, color:'#f5f0e8', fontSize:24, fontFamily:'DM Serif Display,serif', boxSizing:'border-box', outline:'none' }}
-          />
-          {profilo && capitale && Number(capitale) > 0 && (
-            <div style={{ marginTop:10, display:'flex', gap:8 }}>
-              {[
-                { l:'Obiettivo', v:fmt(Number(capitale) * PROFILI.find(x=>x.id===profilo).mult), c:C.gold },
-                { l:'Profitto', v:fmt(Number(capitale) * (PROFILI.find(x=>x.id===profilo).mult - 1)), c:'#86efac' },
-              ].map(s => (
-                <div key={s.l} style={{ flex:1, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10, padding:'10px', textAlign:'center' }}>
-                  <div style={{ fontSize:16, fontWeight:600, color:s.c, fontFamily:'DM Serif Display,serif' }}>{s.v}</div>
-                  <div style={{ fontSize:9, color:'rgba(245,240,232,0.3)', letterSpacing:2, marginTop:2, textTransform:'uppercase' }}>{s.l}</div>
+        <div style={{ marginBottom: 16 }}>
+          <div style={T.label}>Capitale iniziale (€)</div>
+          <input type="number" value={capitale} min={1} onChange={e => setCapitale(e.target.value)} placeholder="Es. 100"
+            style={{ ...T.input, ...T.orb, fontSize: 28, padding: '14px 18px' }} />
+        </div>
+
+        {/* Obiettivo */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={T.label}>Obiettivo (€)</div>
+          <input type="number" value={obiettivo} min={cap + 1} onChange={e => setObiettivo(e.target.value)} placeholder="Es. 300"
+            style={{ ...T.input, ...T.orb, fontSize: 28, padding: '14px 18px' }} />
+          {cap > 0 && obj > cap && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+              {[{ l: 'Profitto', v: fmt(obj - cap), c: T.green }, { l: 'ROI', v: `${Math.round((obj - cap) / cap * 100)}%`, c: T.cyan }].map(s => (
+                <div key={s.l} style={{ ...T.card, padding: '10px', textAlign: 'center' }}>
+                  <div style={{ ...T.orb, fontSize: 16, color: s.c }}>{s.v}</div>
+                  <div style={{ ...T.label, marginBottom: 0, marginTop: 2 }}>{s.l}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Campionato */}
-        <div style={{ marginBottom:28 }}>
-          <div style={C.label}>Campionato</div>
-          <select value={sport} onChange={e => setSport(e.target.value)} style={{ width:'100%', padding:'13px 16px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:14, color:'#f5f0e8', fontSize:14, fontFamily:'DM Sans,sans-serif', outline:'none' }}>
-            {SPORTS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-          </select>
-        </div>
-
-        {error && (
-          <div style={{ padding:'12px 16px', background:'rgba(248,113,113,0.08)', border:'1px solid rgba(248,113,113,0.25)', borderRadius:12, fontSize:13, color:'#f87171', marginBottom:16, lineHeight:1.6 }}>
-            {error}
+        {/* Numero giocate */}
+        {cap > 0 && obj > cap && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={T.label}>Numero di giocate</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {opzioni.map(({ n, quota, tipo, range }) => {
+                const sel = nGiocate === n
+                return (
+                  <button key={n} onClick={() => setNGiocate(n)}
+                    style={{ width: '100%', padding: '14px 16px', border: `1px solid ${sel ? tipo.color + '55' : 'rgba(255,255,255,0.07)'}`, borderRadius: 14, background: sel ? `${tipo.color}0a` : 'rgba(255,255,255,0.02)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'all 0.15s', fontFamily: 'inherit', boxShadow: sel ? `0 0 16px ${tipo.color}12` : 'none' }}>
+                    <div style={{ textAlign: 'left' }}>
+                      <div style={{ ...T.sg, fontSize: 15, fontWeight: 600, color: sel ? T.text : 'rgba(245,240,232,0.5)' }}>{n} giocate</div>
+                      <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.28)', marginTop: 2 }}>Quota ~{quota.toFixed(2)} · {tipo.label} · {range.min}–{range.max}</div>
+                    </div>
+                    <div style={{ ...T.sg, fontSize: 9, padding: '3px 10px', borderRadius: 99, background: `${tipo.color}18`, border: `1px solid ${tipo.color}40`, color: tipo.color, fontWeight: 700, letterSpacing: 1, flexShrink: 0 }}>{tipo.tag}</div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
 
-        <button
-          onClick={avvia}
-          disabled={!profilo || !capitale || Number(capitale) < 1 || loading}
-          style={{ width:'100%', padding:'16px', borderRadius:16, border:`1px solid ${C.gold}55`, background: profilo && capitale ? `rgba(201,168,76,0.15)` : 'rgba(255,255,255,0.03)', color: profilo && capitale ? '#f5f0e8' : 'rgba(245,240,232,0.2)', fontSize:14, fontWeight:600, cursor: profilo && capitale ? 'pointer' : 'not-allowed', fontFamily:'DM Sans,sans-serif', letterSpacing:1.5, transition:'all 0.2s', boxShadow: profilo && capitale ? '0 0 30px rgba(201,168,76,0.15)' : 'none' }}
-        >
+        {/* Campionato */}
+        {isValido && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={T.label}>Campionato</div>
+            <select value={sport} onChange={e => setSport(e.target.value)}
+              style={{ ...T.input, fontSize: 14 }}>
+              {SPORTS.map(s => <option key={s.key} value={s.key} style={{ background: T.bg }}>{s.label}</option>)}
+            </select>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ padding: '12px 16px', background: `${T.red}08`, border: `1px solid ${T.red}30`, borderRadius: 12, ...T.sg, fontSize: 13, color: T.red, marginBottom: 16, lineHeight: 1.6 }}>{error}</div>
+        )}
+
+        <button onClick={avvia} disabled={!isValido} style={{ ...T.btn, opacity: isValido ? 1 : 0.3, cursor: isValido ? 'pointer' : 'not-allowed' }}>
           ANALIZZA E AVVIA →
         </button>
 
-        <div style={{ marginTop:16, fontSize:10, color:'rgba(245,240,232,0.15)', textAlign:'center', lineHeight:2 }}>
-          ⚠️ Solo uso educativo · Non costituisce invito al gioco<br/>Il gioco d'azzardo può creare dipendenza
+        <div style={{ marginTop: 14, ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.12)', textAlign: 'center', lineHeight: 2 }}>
+          Solo uso educativo · Non costituisce invito al gioco<br />Il gioco d'azzardo può creare dipendenza
         </div>
       </div>
     </div>
   )
 
-  // ── FASE SCALATA ATTIVA
+  // ── SCALATA ATTIVA ──
   return (
-    <div style={{ minHeight:'100vh', background:'#0c0c0c' }}>
-      <div style={C.page}>
+    <div style={{ minHeight: '100vh', background: T.bg }}>
+      <style>{GLOBAL_CSS}</style>
+      <div style={T.page}>
+
         {/* Hero bankroll */}
-        <div style={{ marginBottom:24, padding:'22px 20px', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:20 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
+        <div style={{ ...T.card, padding: '20px', marginBottom: 22, animation: 'fadeUp 0.3s ease' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)', letterSpacing:3, textTransform:'uppercase', marginBottom:6 }}>Bankroll</div>
-              <div style={{ ...C.h, fontSize:38, color:'#f5f0e8', lineHeight:1 }}>{fmt(scalataAttiva.bankrollCorrente)}</div>
-              <div style={{ fontSize:12, color:'rgba(245,240,232,0.3)', marginTop:6 }}>
-                Obiettivo {fmt(scalataAttiva.obiettivo)} · {profCorrente?.label}
+              <div style={T.label}>Bankroll</div>
+              <div style={{ ...T.orb, fontSize: 36, fontWeight: 900, background: `linear-gradient(135deg, ${T.cyan}, ${T.purple})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: 1 }}>
+                {fmt(scalataAttiva.bankrollCorrente)}
+              </div>
+              <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.25)', marginTop: 5 }}>
+                Obiettivo {fmt(scalataAttiva.obiettivo)} · {scalataAttiva.nGiocate} giocate · {scalataAttiva.tipoLabel}
               </div>
             </div>
-            <div style={{ textAlign:'right' }}>
-              <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)', letterSpacing:2, marginBottom:4 }}>STEP</div>
-              <div style={{ ...C.h, fontSize:32, color:C.gold }}>{stepIdx + 1}<span style={{ fontSize:16, color:'rgba(245,240,232,0.2)' }}>/{scalataAttiva.steps.length}</span></div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={T.label}>STEP</div>
+              <div style={{ ...T.orb, fontSize: 30, color: T.cyan }}>{stepIdx + 1}<span style={{ fontSize: 14, color: 'rgba(245,240,232,0.2)' }}>/{scalataAttiva.steps.length}</span></div>
             </div>
           </div>
-          {/* Progress */}
-          <div style={{ background:'rgba(255,255,255,0.06)', borderRadius:99, height:4 }}>
-            <div style={{ height:'100%', borderRadius:99, width:`${profitPct}%`, background:`linear-gradient(90deg,${C.gold},#f5f0e8)`, transition:'width 0.5s ease', boxShadow:`0 0 8px ${C.gold}55` }} />
+          {/* Progress bar */}
+          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 99, height: 4 }}>
+            <div style={{ height: '100%', borderRadius: 99, width: `${profitPct}%`, background: `linear-gradient(90deg, ${T.cyan}, ${T.purple})`, transition: 'width 0.5s ease', boxShadow: `0 0 8px ${T.cyan}` }} />
           </div>
-          <div style={{ display:'flex', justifyContent:'space-between', marginTop:5 }}>
-            <span style={{ fontSize:9, color:'rgba(245,240,232,0.2)' }}>{fmt(scalataAttiva.capitale)}</span>
-            <span style={{ fontSize:9, color:'rgba(245,240,232,0.3)' }}>{Math.round(profitPct)}%</span>
-            <span style={{ fontSize:9, color:'rgba(245,240,232,0.2)' }}>{fmt(scalataAttiva.obiettivo)}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
+            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.18)' }}>{fmt(scalataAttiva.capitale)}</span>
+            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.3)' }}>{Math.round(profitPct)}%</span>
+            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.18)' }}>{fmt(scalataAttiva.obiettivo)}</span>
           </div>
         </div>
 
         {/* Step corrente */}
         {stepCorrente && !stepCorrente.done && (
-          <div style={{ marginBottom:24 }}>
-            <div style={C.label}>Prossima giocata</div>
-            <div style={{ padding:'18px 20px', background:'rgba(201,168,76,0.06)', border:`1px solid ${C.gold}33`, borderRadius:16, marginBottom:16 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                <div style={{ ...C.h, fontSize:28, color:'#f5f0e8' }}>{fmt(stepCorrente.importo)}</div>
-                <div style={{ textAlign:'right' }}>
-                  <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)' }}>Potenziale vincita</div>
-                  <div style={{ ...C.h, fontSize:20, color:'#86efac' }}>{fmt(stepCorrente.vincita)}</div>
+          <div style={{ marginBottom: 22 }}>
+            <div style={T.label}>Prossima giocata</div>
+            <div style={{ ...T.cardGlow(T.cyan), padding: '16px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                <div style={{ ...T.orb, fontSize: 28, color: T.text }}>{fmt(stepCorrente.importo)}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)' }}>Vincita potenziale</div>
+                  <div style={{ ...T.orb, fontSize: 18, color: T.green }}>{fmt(stepCorrente.vincita)}</div>
                 </div>
               </div>
-              <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)' }}>
-                Quota media: {stepCorrente.quota} · ▲ {fmt(stepCorrente.bankrollSeVince)} · ▼ {fmt(stepCorrente.bankrollSePerde)}
+              <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)' }}>
+                Quota {stepCorrente.quota} · ▲ {fmt(stepCorrente.bankrollSeVince)} · ▼ {fmt(stepCorrente.bankrollSePerde)}
               </div>
             </div>
 
-            {/* Partite consigliate */}
+            {/* Partite AI */}
             {partiteConsigliate.length > 0 && (
-              <div>
-                <div style={C.label}>Partite consigliate dall'AI</div>
-                <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:16 }}>
+              <>
+                <div style={T.label}>Partite consigliate dall'AI</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
                   {partiteConsigliate.map((p, i) => {
-                    const isSelected = selectedForStep[stepIdx]?.index === p.index
-                    const vc = verdettoBg(p.verdetto)
+                    const isSel = selectedForStep[stepIdx]?.index === p.index
+                    const vc = { OTTIMA: T.green, BUONA: T.cyan, ACCETTABILE: T.gold }[p.verdetto] || 'rgba(245,240,232,0.3)'
                     return (
-                      <div key={i} onClick={() => setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSelected ? null : p }))}
-                        style={{ padding:'14px 16px', background: isSelected ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.03)', border:`1px solid ${isSelected ? C.gold+'55' : 'rgba(255,255,255,0.07)'}`, borderRadius:14, cursor:'pointer', transition:'all 0.15s' }}>
-                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
-                          <div>
-                            <div style={{ fontSize:13, fontWeight:600, color:'#f5f0e8' }}>{p.match?.home} <span style={{ color:'rgba(245,240,232,0.3)' }}>vs</span> {p.match?.away}</div>
-                            <div style={{ fontSize:11, color:'rgba(245,240,232,0.4)', marginTop:2 }}>
+                      <div key={i} onClick={() => setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSel ? null : p }))}
+                        style={{ padding: '14px 16px', background: isSel ? `${T.cyan}07` : 'rgba(255,255,255,0.02)', border: `1px solid ${isSel ? T.cyan + '40' : 'rgba(255,255,255,0.07)'}`, borderRadius: 14, cursor: 'pointer', transition: 'all 0.15s', boxShadow: isSel ? `0 0 16px ${T.cyan}08` : 'none' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                          <div style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
+                            <div style={{ ...T.sg, fontSize: 13, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {p.match?.home} <span style={{ color: 'rgba(245,240,232,0.25)' }}>vs</span> {p.match?.away}
+                            </div>
+                            <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 2 }}>
                               {p.match?.esito} · {p.match?.bookmaker} · {p.match?.commence ? fmtDate(p.match.commence) : ''}
                             </div>
                           </div>
-                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
-                            <div style={{ ...C.h, fontSize:20, color:C.gold }}>{p.match?.quota}</div>
-                            <div style={{ fontSize:9, padding:'2px 8px', borderRadius:99, background:`${vc}22`, border:`1px solid ${vc}44`, color:vc, fontWeight:700, letterSpacing:1 }}>{p.verdetto}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                            <div style={{ ...T.orb, fontSize: 18, color: T.cyan }}>{p.match?.quota}</div>
+                            <div style={{ ...T.sg, fontSize: 8, padding: '2px 8px', borderRadius: 99, background: `${vc}18`, border: `1px solid ${vc}40`, color: vc, fontWeight: 700, letterSpacing: 1 }}>{p.verdetto}</div>
                           </div>
                         </div>
-                        {/* Forma */}
                         {(p.forma_casa || p.forma_trasferta) && (
-                          <div style={{ display:'flex', gap:12, marginBottom:8 }}>
-                            {[{label:p.match?.home?.split(' ')[0], forma:p.forma_casa},{label:p.match?.away?.split(' ')[0], forma:p.forma_trasferta}].map(({label,forma}) => forma && (
-                              <div key={label} style={{ display:'flex', alignItems:'center', gap:5 }}>
-                                <span style={{ fontSize:10, color:'rgba(245,240,232,0.35)' }}>{label}</span>
-                                <div style={{ display:'flex', gap:2 }}>
-                                  {forma.split('-').map((r,j) => (
-                                    <div key={j} style={{ width:16, height:16, borderRadius:4, display:'flex', alignItems:'center', justifyContent:'center', fontSize:8, fontWeight:800, background:r==='V'?'rgba(134,239,172,0.2)':r==='P'?'rgba(248,113,113,0.2)':'rgba(245,158,11,0.2)', color:r==='V'?'#86efac':r==='P'?'#f87171':'#f59e0b' }}>{r}</div>
+                          <div style={{ display: 'flex', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
+                            {[{ label: p.match?.home?.split(' ')[0], forma: p.forma_casa }, { label: p.match?.away?.split(' ')[0], forma: p.forma_trasferta }].map(({ label, forma }) => forma && (
+                              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.3)' }}>{label}</span>
+                                <div style={{ display: 'flex', gap: 2 }}>
+                                  {forma.split('-').map((r, j) => (
+                                    <div key={j} style={{ width: 16, height: 16, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, background: r === 'V' ? 'rgba(0,255,150,0.15)' : r === 'P' ? 'rgba(255,68,68,0.15)' : 'rgba(201,168,76,0.15)', color: r === 'V' ? T.green : r === 'P' ? T.red : T.gold }}>{r}</div>
                                   ))}
                                 </div>
                               </div>
                             ))}
                           </div>
                         )}
-                        <div style={{ fontSize:11, color:'rgba(245,240,232,0.5)', lineHeight:1.6 }}>
-                          <span style={{ color:'#86efac' }}>✓</span> {p.motivo_principale}
+                        <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.5)', lineHeight: 1.5 }}>
+                          <span style={{ color: T.green }}>✓</span> {p.motivo_principale}
                         </div>
-                        {p.rischio_principale && (
-                          <div style={{ fontSize:11, color:'rgba(245,240,232,0.4)', marginTop:3 }}>
-                            <span style={{ color:'#f87171' }}>⚠</span> {p.rischio_principale}
-                          </div>
-                        )}
-                        {p.notizie && (
-                          <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)', marginTop:4, fontStyle:'italic' }}>
-                            📰 {p.notizie}
-                          </div>
-                        )}
-                        {p.value_bet && <div style={{ fontSize:10, color:'#86efac', marginTop:4 }}>✨ Value bet</div>}
+                        {p.rischio_principale && <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 3 }}><span style={{ color: T.red }}>⚠</span> {p.rischio_principale}</div>}
+                        {p.notizie && <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 4 }}>📰 {p.notizie}</div>}
+                        {p.value_bet && <div style={{ ...T.sg, fontSize: 10, color: T.green, marginTop: 4 }}>✨ Value bet</div>}
                       </div>
                     )
                   })}
                 </div>
-              </div>
+              </>
             )}
 
-            {/* Azioni esito */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-              <button
-                onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
-                style={{ padding:'14px', background:'rgba(134,239,172,0.08)', border:'1px solid rgba(134,239,172,0.25)', borderRadius:14, color:'#86efac', fontSize:14, fontWeight:600, cursor:'pointer', fontFamily:'DM Sans,sans-serif' }}
-              >
-                ✓ Vinto
-              </button>
-              <button
-                onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
-                style={{ padding:'14px', background:'rgba(248,113,113,0.08)', border:'1px solid rgba(248,113,113,0.25)', borderRadius:14, color:'#f87171', fontSize:14, fontWeight:600, cursor:'pointer', fontFamily:'DM Sans,sans-serif' }}
-              >
-                ✗ Perso
-              </button>
+            {/* Vinto / Perso */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
+                style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Vinto</button>
+              <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
+                style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Perso</button>
             </div>
           </div>
         )}
 
-        {/* Step precedenti */}
+        {/* Step completati */}
         {scalataAttiva.steps.filter(s => s.done).length > 0 && (
-          <div style={{ marginBottom:20 }}>
-            <div style={C.label}>Step completati</div>
-            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+          <div style={{ marginBottom: 20 }}>
+            <div style={T.label}>Step completati</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {scalataAttiva.steps.filter(s => s.done).map((step, i) => (
-                <div key={i} style={{ padding:'12px 16px', background: step.esito==='vinto' ? 'rgba(134,239,172,0.04)' : 'rgba(248,113,113,0.04)', border:`1px solid ${step.esito==='vinto' ? 'rgba(134,239,172,0.15)' : 'rgba(248,113,113,0.15)'}`, borderRadius:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <div key={i} style={{ padding: '12px 16px', background: step.esito === 'vinto' ? `${T.green}05` : `${T.red}05`, border: `1px solid ${step.esito === 'vinto' ? T.green + '20' : T.red + '20'}`, borderRadius: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontSize:13, color:'rgba(245,240,232,0.7)' }}>
-                      <span style={{ color: step.esito==='vinto' ? '#86efac' : '#f87171', marginRight:8 }}>{step.esito==='vinto' ? '✓' : '✗'}</span>
+                    <div style={{ ...T.sg, fontSize: 13, color: 'rgba(245,240,232,0.65)' }}>
+                      <span style={{ color: step.esito === 'vinto' ? T.green : T.red, marginRight: 8 }}>{step.esito === 'vinto' ? '✓' : '✗'}</span>
                       Step {step.step} · {fmt(step.importo)}
                     </div>
-                    {step.matchUsato && <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)', marginTop:2 }}>{step.matchUsato.home} vs {step.matchUsato.away}</div>}
+                    {step.matchUsato && <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 2 }}>{step.matchUsato.home} vs {step.matchUsato.away}</div>}
                   </div>
-                  <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)' }}>{step.timestamp ? new Date(step.timestamp).toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' }) : ''}</div>
+                  <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.25)' }}>{step.timestamp ? new Date(step.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <button onClick={abbandonaScalata} style={{ width:'100%', padding:'12px', background:'transparent', border:'1px solid rgba(248,113,113,0.15)', borderRadius:12, color:'rgba(248,113,113,0.4)', fontSize:11, cursor:'pointer', fontFamily:'DM Sans,sans-serif', letterSpacing:2 }}>
+        <button onClick={abbandonaScalata} style={{ width: '100%', padding: '12px', background: 'transparent', border: `1px solid ${T.red}20`, borderRadius: 12, color: `${T.red}50`, ...T.sg, fontSize: 11, cursor: 'pointer', letterSpacing: 2 }}>
           ABBANDONA SCALATA
         </button>
       </div>

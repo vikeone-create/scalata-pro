@@ -1,0 +1,333 @@
+import { useState, useEffect } from 'react'
+import { supabase } from '../supabase'
+
+const fmt = n => `€${Number(n).toFixed(2)}`
+const fmtDate = d => new Date(d).toLocaleDateString('it-IT', { day:'2-digit', month:'short', year:'numeric' })
+const fmtTime = d => new Date(d).toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' })
+
+const STATUS = {
+  completata:  { label:'Completata',  color:'#86efac' },
+  fallita:     { label:'Fallita',     color:'#f87171' },
+  abbandonata: { label:'Abbandonata', color:'rgba(245,240,232,0.3)' },
+}
+
+// Ricalcola la prossima giocata corretta in base al bankroll reale
+function calcolaProssimaGiocata(scalata) {
+  const { bankrollCorrente, obiettivo, quotaMedia, steps, stepCorrente } = scalata
+  if (!bankrollCorrente || !obiettivo || !quotaMedia) return null
+  const profitTarget = obiettivo - scalata.capitale
+  const profitoCumulato = steps
+    .filter(s => s.done && s.esito === 'vinto')
+    .reduce((acc, s) => acc + (s.vincita - s.importo), 0)
+  const profitoDaFare = profitTarget - profitoCumulato
+  if (profitoDaFare <= 0) return null
+  let importo = Math.ceil((profitoDaFare / (quotaMedia - 1)) * 100) / 100
+  if (importo > bankrollCorrente) importo = bankrollCorrente
+  return {
+    importo: +importo.toFixed(2),
+    quota: +quotaMedia.toFixed(2),
+    vincitaPotenziale: +(importo * quotaMedia).toFixed(2),
+    step: (stepCorrente || 0) + 1,
+  }
+}
+
+// Mini grafico SVG andamento bankroll
+function BankrollChart({ scalata }) {
+  const steps = scalata.steps?.filter(s => s.done) || []
+  if (steps.length < 2) return null
+
+  const points = [{ x: 0, y: scalata.capitale }]
+  steps.forEach(s => {
+    const prev = points[points.length - 1].y
+    points.push({ x: points.length, y: s.esito === 'vinto' ? s.bankrollSeVince : s.bankrollSePerde })
+  })
+
+  const maxY = Math.max(...points.map(p => p.y), scalata.obiettivo)
+  const minY = Math.min(...points.map(p => p.y), 0)
+  const rangeY = maxY - minY || 1
+  const W = 280, H = 60, PAD = 4
+
+  const toX = i => PAD + (i / (points.length - 1)) * (W - PAD * 2)
+  const toY = v => H - PAD - ((v - minY) / rangeY) * (H - PAD * 2)
+
+  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(p.y).toFixed(1)}`).join(' ')
+  const fill = `${path} L${toX(points.length-1).toFixed(1)},${H} L${PAD},${H} Z`
+
+  const lastY = points[points.length - 1].y
+  const isUp = lastY >= scalata.capitale
+  const color = isUp ? '#86efac' : '#f87171'
+  const objY = toY(scalata.obiettivo)
+
+  return (
+    <svg width={W} height={H} style={{ display:'block', margin:'10px 0 4px' }}>
+      {/* Obiettivo line */}
+      {objY >= 0 && objY <= H && (
+        <line x1={PAD} y1={objY} x2={W-PAD} y2={objY} stroke="rgba(201,168,76,0.3)" strokeWidth="1" strokeDasharray="3,3" />
+      )}
+      {/* Fill */}
+      <path d={fill} fill={`${color}15`} />
+      {/* Line */}
+      <path d={path} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Dots */}
+      {points.map((p, i) => (
+        <circle key={i} cx={toX(i)} cy={toY(p.y)} r="2.5"
+          fill={i === 0 ? 'rgba(245,240,232,0.4)' : steps[i-1]?.esito === 'vinto' ? '#86efac' : '#f87171'}
+        />
+      ))}
+    </svg>
+  )
+}
+
+const C = {
+  page: { maxWidth:480, margin:'0 auto', padding:'24px 16px' },
+  serif: { fontFamily:'DM Serif Display,Georgia,serif' },
+  gold: '#c9a84c',
+  label: { fontSize:10, color:'rgba(245,240,232,0.35)', letterSpacing:3, textTransform:'uppercase', marginBottom:8 },
+  card: { background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:16 },
+}
+
+export default function Storico({ session }) {
+  const userId = session?.user?.id
+  const [storico, setStorico] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(null)
+
+  useEffect(() => {
+    if (!userId) return
+    supabase.from('user_data').select('storico').eq('user_id', userId).single()
+      .then(({ data }) => { if (data?.storico) setStorico(data.storico); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [userId])
+
+  if (loading) return (
+    <div style={{ minHeight:'100vh', background:'#0c0c0c', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ width:32, height:32, borderRadius:'50%', border:'2px solid rgba(201,168,76,0.2)', borderTop:`2px solid ${C.gold}`, animation:'spin 1s linear infinite' }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  )
+
+  const completate = storico.filter(s => s.status === 'completata')
+  const fallite = storico.filter(s => s.status === 'fallita')
+  const totProfitto = completate.reduce((a, s) => a + (s.obiettivo - s.capitale), 0)
+  const totPerdita = fallite.reduce((a, s) => a + (s.capitale - (s.bankrollCorrente || 0)), 0)
+  const netto = totProfitto - totPerdita
+  const winRate = storico.length ? Math.round(completate.length / storico.length * 100) : 0
+
+  return (
+    <div style={{ minHeight:'100vh', background:'#0c0c0c' }}>
+      <div style={C.page}>
+
+        {/* Header */}
+        <div style={{ marginBottom:24 }}>
+          <div style={{ ...C.serif, fontSize:26, color:'#f5f0e8' }}>Storico</div>
+          <div style={{ fontSize:12, color:'rgba(245,240,232,0.3)', marginTop:4 }}>Le tue scalate passate</div>
+        </div>
+
+        {/* Stats globali */}
+        {storico.length > 0 && (
+          <div style={{ marginBottom:28 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
+              <div style={{ ...C.card, padding:'14px 16px' }}>
+                <div style={{ ...C.serif, fontSize:24, color:C.gold }}>{winRate}%</div>
+                <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)', letterSpacing:2, marginTop:4, textTransform:'uppercase' }}>Win Rate</div>
+              </div>
+              <div style={{ ...C.card, padding:'14px 16px' }}>
+                <div style={{ ...C.serif, fontSize:24, color: netto >= 0 ? '#86efac' : '#f87171' }}>
+                  {netto >= 0 ? '+' : ''}{fmt(netto)}
+                </div>
+                <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)', letterSpacing:2, marginTop:4, textTransform:'uppercase' }}>Netto totale</div>
+              </div>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
+              {[
+                { l:'Scalate', v:storico.length, c:'rgba(245,240,232,0.6)' },
+                { l:'Completate', v:completate.length, c:'#86efac' },
+                { l:'Fallite', v:fallite.length, c:'#f87171' },
+              ].map(s => (
+                <div key={s.l} style={{ ...C.card, padding:'12px', textAlign:'center' }}>
+                  <div style={{ ...C.serif, fontSize:20, color:s.c }}>{s.v}</div>
+                  <div style={{ fontSize:9, color:'rgba(245,240,232,0.25)', letterSpacing:2, marginTop:3, textTransform:'uppercase' }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Lista scalate */}
+        {storico.length === 0 ? (
+          <div style={{ textAlign:'center', padding:'60px 20px', color:'rgba(245,240,232,0.2)' }}>
+            <div style={{ ...C.serif, fontSize:40, marginBottom:12 }}>◎</div>
+            <div style={{ fontSize:14 }}>Nessuna scalata ancora</div>
+            <div style={{ fontSize:12, marginTop:8, color:'rgba(245,240,232,0.15)' }}>Completa la prima per vederla qui</div>
+          </div>
+        ) : (
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {storico.map((s, i) => {
+              const st = STATUS[s.status] || STATUS.abbandonata
+              const vinti = s.steps?.filter(x => x.esito === 'vinto').length || 0
+              const persi = s.steps?.filter(x => x.esito === 'perso').length || 0
+              const fatti = s.steps?.filter(x => x.done).length || 0
+              const profitto = s.status === 'completata'
+                ? s.obiettivo - s.capitale
+                : -((s.capitale || 0) - (s.bankrollCorrente || 0))
+              const isOpen = expanded === i
+              const prossima = s.status === 'attiva' ? calcolaProssimaGiocata(s) : null
+
+              return (
+                <div key={i} style={{ background:'rgba(255,255,255,0.02)', border:`1px solid ${st.color}22`, borderRadius:16, overflow:'hidden' }}>
+                  {/* Header card */}
+                  <div
+                    onClick={() => setExpanded(isOpen ? null : i)}
+                    style={{ padding:'16px', cursor:'pointer' }}
+                  >
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+                      <div>
+                        <div style={{ fontSize:14, fontWeight:600, color:'#f5f0e8', marginBottom:3 }}>
+                          {fmt(s.capitale)} → {fmt(s.obiettivo)}
+                          <span style={{ fontSize:11, color:'rgba(245,240,232,0.35)', fontWeight:400, marginLeft:8 }}>
+                            {s.nGiocate ? `${s.nGiocate} giocate` : s.tipoLabel || s.tipo}
+                          </span>
+                        </div>
+                        <div style={{ fontSize:11, color:'rgba(245,240,232,0.3)' }}>{fmtDate(s.createdAt)}</div>
+                      </div>
+                      <div style={{ textAlign:'right' }}>
+                        <div style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:`${st.color}15`, border:`1px solid ${st.color}33`, color:st.color, fontWeight:600, marginBottom:6 }}>{st.label}</div>
+                        <div style={{ ...C.serif, fontSize:16, color: profitto >= 0 ? '#86efac' : '#f87171' }}>
+                          {profitto >= 0 ? '+' : ''}{fmt(profitto)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Mini stats */}
+                    <div style={{ display:'flex', gap:16, marginBottom:10 }}>
+                      {[
+                        { l:'Step fatti', v:`${fatti}/${s.steps?.length || 0}` },
+                        { l:'Vinti', v:vinti, c:'#86efac' },
+                        { l:'Persi', v:persi, c:'#f87171' },
+                        { l:'Quota', v:s.quotaMedia ? s.quotaMedia.toFixed(2) : '—' },
+                      ].map(x => (
+                        <div key={x.l}>
+                          <div style={{ ...C.serif, fontSize:13, color:x.c||'rgba(245,240,232,0.6)' }}>{x.v}</div>
+                          <div style={{ fontSize:9, color:'rgba(245,240,232,0.25)', textTransform:'uppercase', letterSpacing:1 }}>{x.l}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Timeline step */}
+                    <div style={{ display:'flex', gap:3, flexWrap:'wrap', marginBottom:6 }}>
+                      {(s.steps || []).map((st2, j) => (
+                        <div key={j} style={{ width:22, height:22, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:700, background:!st2.done?'rgba(255,255,255,0.04)':st2.esito==='vinto'?'rgba(134,239,172,0.15)':'rgba(248,113,113,0.15)', border:`1px solid ${!st2.done?'rgba(255,255,255,0.07)':st2.esito==='vinto'?'rgba(134,239,172,0.4)':'rgba(248,113,113,0.4)'}`, color:!st2.done?'rgba(245,240,232,0.2)':st2.esito==='vinto'?'#86efac':'#f87171' }}>
+                          {!st2.done ? j+1 : st2.esito==='vinto' ? '✓' : '✗'}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Expand indicator */}
+                    <div style={{ fontSize:10, color:'rgba(245,240,232,0.25)', textAlign:'right' }}>
+                      {isOpen ? '▲ chiudi' : '▼ dettaglio'}
+                    </div>
+                  </div>
+
+                  {/* DETTAGLIO ESPANSO */}
+                  {isOpen && (
+                    <div style={{ borderTop:'1px solid rgba(255,255,255,0.06)', padding:'16px' }}>
+
+                      {/* Grafico bankroll */}
+                      {s.steps?.filter(x => x.done).length >= 2 && (
+                        <div style={{ marginBottom:16 }}>
+                          <div style={C.label}>Andamento bankroll</div>
+                          <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'rgba(245,240,232,0.3)', marginBottom:2 }}>
+                            <span>Inizio {fmt(s.capitale)}</span>
+                            <span style={{ color:'rgba(201,168,76,0.5)' }}>— obiettivo {fmt(s.obiettivo)}</span>
+                            <span>Fine {fmt(s.bankrollCorrente)}</span>
+                          </div>
+                          <BankrollChart scalata={s} />
+                        </div>
+                      )}
+
+                      {/* Prossima giocata (se scalata attiva) */}
+                      {prossima && (
+                        <div style={{ marginBottom:16, padding:'14px 16px', background:'rgba(201,168,76,0.06)', border:'1px solid rgba(201,168,76,0.2)', borderRadius:12 }}>
+                          <div style={C.label}>Prossima giocata consigliata</div>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                            <div>
+                              <div style={{ ...C.serif, fontSize:24, color:'#f5f0e8' }}>{fmt(prossima.importo)}</div>
+                              <div style={{ fontSize:11, color:'rgba(245,240,232,0.35)', marginTop:3 }}>
+                                Quota {prossima.quota} · Vincita {fmt(prossima.vincitaPotenziale)}
+                              </div>
+                            </div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)' }}>Step</div>
+                              <div style={{ ...C.serif, fontSize:22, color:C.gold }}>{prossima.step}</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize:10, color:'rgba(245,240,232,0.25)', marginTop:8, lineHeight:1.7 }}>
+                            Importo ricalcolato sul bankroll reale di {fmt(s.bankrollCorrente)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step dettagliati */}
+                      <div style={C.label}>Step dettagliati</div>
+                      <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                        {(s.steps || []).map((step, j) => {
+                          if (!step.done) return (
+                            <div key={j} style={{ padding:'10px 14px', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.05)', borderRadius:10, display:'flex', alignItems:'center', gap:10, opacity:0.4 }}>
+                              <div style={{ width:24, height:24, borderRadius:8, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, color:'rgba(245,240,232,0.3)', flexShrink:0 }}>{j+1}</div>
+                              <div style={{ fontSize:12, color:'rgba(245,240,232,0.3)' }}>Step {step.step} — non giocato</div>
+                            </div>
+                          )
+                          const isV = step.esito === 'vinto'
+                          return (
+                            <div key={j} style={{ padding:'12px 14px', background:isV?'rgba(134,239,172,0.04)':'rgba(248,113,113,0.04)', border:`1px solid ${isV?'rgba(134,239,172,0.15)':'rgba(248,113,113,0.15)'}`, borderRadius:10 }}>
+                              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
+                                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                  <div style={{ width:24, height:24, borderRadius:8, background:isV?'rgba(134,239,172,0.15)':'rgba(248,113,113,0.15)', border:`1px solid ${isV?'rgba(134,239,172,0.4)':'rgba(248,113,113,0.4)'}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, color:isV?'#86efac':'#f87171', fontWeight:700, flexShrink:0 }}>
+                                    {isV ? '✓' : '✗'}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize:13, fontWeight:600, color:'rgba(245,240,232,0.8)' }}>
+                                      Step {step.step} · <span style={{ ...C.serif }}>{fmt(step.importo)}</span>
+                                    </div>
+                                    {step.timestamp && <div style={{ fontSize:10, color:'rgba(245,240,232,0.3)', marginTop:1 }}>{fmtDate(step.timestamp)} · {fmtTime(step.timestamp)}</div>}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign:'right' }}>
+                                  <div style={{ fontSize:11, color:'rgba(245,240,232,0.4)' }}>× {step.quota}</div>
+                                  <div style={{ ...C.serif, fontSize:14, color:isV?'#86efac':'#f87171' }}>
+                                    {isV ? '+'+fmt(step.vincita - step.importo) : '-'+fmt(step.importo)}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Partita usata */}
+                              {step.matchUsato && (
+                                <div style={{ padding:'8px 10px', background:'rgba(255,255,255,0.03)', borderRadius:8, fontSize:11 }}>
+                                  <div style={{ color:'rgba(245,240,232,0.6)', fontWeight:600 }}>
+                                    {step.matchUsato.home} <span style={{ color:'rgba(245,240,232,0.25)' }}>vs</span> {step.matchUsato.away}
+                                  </div>
+                                  <div style={{ color:'rgba(245,240,232,0.3)', marginTop:2, fontSize:10 }}>
+                                    {step.matchUsato.esito} · {step.matchUsato.bookmaker}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Bankroll dopo step */}
+                              <div style={{ marginTop:6, fontSize:10, color:'rgba(245,240,232,0.3)', display:'flex', gap:12 }}>
+                                <span>Bankroll dopo: <span style={{ color:isV?'#86efac':'#f87171' }}>{fmt(isV ? step.bankrollSeVince : step.bankrollSePerde)}</span></span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,61 @@
+name: ScalataPro — Cron Jobs
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 06:00 ora italiana — genera pronostici del giorno
+    - cron: '0 1 * * *'   # 02:00 ora italiana — verifica risultati di ieri
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Azione da eseguire'
+        required: true
+        default: 'pronostici'
+        type: choice
+        options:
+          - pronostici
+          - verifica
+          - entrambi
+
+jobs:
+
+  genera-pronostici:
+    name: Genera pronostici giornalieri
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'pronostici' || github.event.inputs.action == 'entrambi'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama /api/cron-pronostici
+        run: |
+          RESPONSE=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron-pronostici")
+          echo "HTTP Status: $RESPONSE"
+          cat /tmp/resp.json
+          if [ "$RESPONSE" != "200" ]; then
+            echo "ERRORE: cron-pronostici ha risposto $RESPONSE"
+            exit 1
+          fi
+
+  verifica-risultati:
+    name: Verifica risultati di ieri
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 1 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'verifica' || github.event.inputs.action == 'entrambi'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chiama /api/cron-verifica
+        run: |
+          RESPONSE=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron-verifica")
+          echo "HTTP Status: $RESPONSE"
+          cat /tmp/resp.json
+          if [ "$RESPONSE" != "200" ]; then
+            echo "ERRORE: cron-verifica ha risposto $RESPONSE"
+            exit 1
+          fi

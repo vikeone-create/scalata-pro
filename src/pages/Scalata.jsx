@@ -72,6 +72,7 @@ export default function Scalata({ session }) {
   const [loadingMsg, setLoadingMsg] = useState('')
   const [error, setError]         = useState(null)
   const [selectedForStep, setSelectedForStep] = useState({})
+  const [editedValues, setEditedValues] = useState({}) // { [stepIdx]: { quota, importo } }
 
   useEffect(() => {
     if (!userId) return
@@ -125,9 +126,26 @@ export default function Scalata({ session }) {
   }
 
   const registraEsito = (stepIndex, esito, matchUsato) => {
-    const steps = scalataAttiva.steps.map((s, i) => i === stepIndex ? { ...s, done: true, esito, timestamp: new Date().toISOString(), matchUsato } : s)
-    const step = steps[stepIndex]
-    const bankrollCorrente = esito === 'vinto' ? step.bankrollSeVince : step.bankrollSePerde
+    const step = scalataAttiva.steps[stepIndex]
+    // Usa valori modificati se presenti
+    const edited = editedValues[stepIndex] || {}
+    const quotaUsata = Number(edited.quota) || step.quota
+    const importoUsato = Number(edited.importo) || step.importo
+    const vincitaUsata = +(importoUsato * quotaUsata).toFixed(2)
+
+    const steps = scalataAttiva.steps.map((s, i) => i === stepIndex ? {
+      ...s, done: true, esito,
+      timestamp: new Date().toISOString(),
+      matchUsato,
+      quotaEffettiva: quotaUsata,
+      importoEffettivo: importoUsato,
+      vincitaEffettiva: vincitaUsata,
+      bankrollSeVince: +(scalataAttiva.bankrollCorrente - importoUsato + vincitaUsata).toFixed(2),
+      bankrollSePerde: +(scalataAttiva.bankrollCorrente - importoUsato).toFixed(2),
+    } : s)
+
+    const stepAggiornato = steps[stepIndex]
+    const bankrollCorrente = esito === 'vinto' ? stepAggiornato.bankrollSeVince : stepAggiornato.bankrollSePerde
     const stepCorrente = stepIndex + 1
     let status = 'attiva'
     if (esito === 'vinto' && bankrollCorrente >= scalataAttiva.obiettivo) status = 'completata'
@@ -307,30 +325,37 @@ export default function Scalata({ session }) {
             {/* Partite AI */}
             {partiteConsigliate.length > 0 && (
               <>
-                <div style={T.label}>Partite consigliate dall'AI</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={T.label}>Scegli una partita da giocare</div>
+                  <div style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.2)' }}>1 su {partiteConsigliate.length}</div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                   {partiteConsigliate.map((p, i) => {
                     const isSel = selectedForStep[stepIdx]?.index === p.index
                     const vc = { OTTIMA: T.green, BUONA: T.cyan, ACCETTABILE: T.gold }[p.verdetto] || 'rgba(245,240,232,0.3)'
                     return (
-                      <div key={i} onClick={() => setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSel ? null : p }))}
-                        style={{ padding: '14px 16px', background: isSel ? `${T.cyan}07` : 'rgba(255,255,255,0.02)', border: `1px solid ${isSel ? T.cyan + '40' : 'rgba(255,255,255,0.07)'}`, borderRadius: 14, cursor: 'pointer', transition: 'all 0.15s', boxShadow: isSel ? `0 0 16px ${T.cyan}08` : 'none' }}>
+                      <div key={i} onClick={() => {
+                        setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSel ? null : p }))
+                        if (!isSel) setEditedValues(prev => ({ ...prev, [stepIdx]: { quota: p.match?.quota, importo: stepCorrente?.importo } }))
+                      }}
+                        style={{ padding: '14px 16px', background: isSel ? `${vc}06` : 'rgba(255,255,255,0.02)', border: `1px solid ${isSel ? vc + '45' : 'rgba(255,255,255,0.07)'}`, borderRadius: 14, cursor: 'pointer', transition: 'all 0.15s', boxShadow: isSel ? `0 0 20px ${vc}10` : 'none' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                           <div style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
-                            <div style={{ ...T.sg, fontSize: 13, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div style={{ ...T.sg, fontSize: 13, fontWeight: 600, color: T.text }}>
                               {p.match?.home} <span style={{ color: 'rgba(245,240,232,0.25)' }}>vs</span> {p.match?.away}
                             </div>
-                            <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 2 }}>
-                              {p.match?.esito} · {p.match?.bookmaker} · {p.match?.commence ? fmtDate(p.match.commence) : ''}
+                            <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 2 }}>
+                              <span style={{ color: 'rgba(245,240,232,0.5)' }}>{p.match?.esito}</span> · {p.match?.commence ? fmtDate(p.match.commence) : ''}
+                              <span style={{ color: 'rgba(245,240,232,0.15)', marginLeft: 4 }}>· {p.match?.bookmaker}</span>
                             </div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                            <div style={{ ...T.orb, fontSize: 18, color: T.cyan }}>{p.match?.quota}</div>
+                            <div style={{ ...T.orb, fontSize: 20, color: vc }}>{p.match?.quota}</div>
                             <div style={{ ...T.sg, fontSize: 8, padding: '2px 8px', borderRadius: 99, background: `${vc}18`, border: `1px solid ${vc}40`, color: vc, fontWeight: 700, letterSpacing: 1 }}>{p.verdetto}</div>
                           </div>
                         </div>
                         {(p.forma_casa || p.forma_trasferta) && (
-                          <div style={{ display: 'flex', gap: 10, marginBottom: 7, flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
                             {[{ label: p.match?.home?.split(' ')[0], forma: p.forma_casa }, { label: p.match?.away?.split(' ')[0], forma: p.forma_trasferta }].map(({ label, forma }) => forma && (
                               <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <span style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.3)' }}>{label}</span>
@@ -346,9 +371,51 @@ export default function Scalata({ session }) {
                         <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.5)', lineHeight: 1.5 }}>
                           <span style={{ color: T.green }}>✓</span> {p.motivo_principale}
                         </div>
-                        {p.rischio_principale && <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 3 }}><span style={{ color: T.red }}>⚠</span> {p.rischio_principale}</div>}
-                        {p.notizie && <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 4 }}>📰 {p.notizie}</div>}
-                        {p.value_bet && <div style={{ ...T.sg, fontSize: 10, color: T.green, marginTop: 4 }}>✨ Value bet</div>}
+                        {p.rischio_principale && (
+                          <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 3 }}>
+                            <span style={{ color: T.red }}>⚠</span> {p.rischio_principale}
+                          </div>
+                        )}
+                        {p.notizie && (
+                          <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.22)', marginTop: 4 }}>📰 {p.notizie}</div>
+                        )}
+                        {p.value_bet && (
+                          <div style={{ marginTop: 8, padding: '6px 10px', background: `${T.green}08`, border: `1px solid ${T.green}20`, borderRadius: 8 }}>
+                            <div style={{ ...T.sg, fontSize: 10, color: T.green, fontWeight: 600 }}>✨ Value bet</div>
+                            <div style={{ ...T.sg, fontSize: 9, color: `${T.green}70`, marginTop: 1, lineHeight: 1.5 }}>
+                              La quota offre più valore del rischio reale stimato dal modello
+                            </div>
+                          </div>
+                        )}
+                        {isSel && (
+                          <div style={{ marginTop: 12, padding: '12px', background: 'rgba(0,0,0,0.25)', borderRadius: 10, borderTop: `1px solid ${vc}25` }}
+                            onClick={e => e.stopPropagation()}>
+                            <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.35)', marginBottom: 8 }}>
+                              ✏️ Modifica se giochi su bookmaker diverso
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <div>
+                                <div style={{ ...T.label, marginBottom: 4 }}>Importo (€)</div>
+                                <input type="number"
+                                  value={editedValues[stepIdx]?.importo ?? stepCorrente?.importo}
+                                  onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], importo: e.target.value } }))}
+                                  style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px' }} />
+                              </div>
+                              <div>
+                                <div style={{ ...T.label, marginBottom: 4 }}>Quota</div>
+                                <input type="number" step="0.01"
+                                  value={editedValues[stepIdx]?.quota ?? p.match?.quota}
+                                  onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], quota: e.target.value } }))}
+                                  style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px' }} />
+                              </div>
+                            </div>
+                            <div style={{ ...T.sg, fontSize: 11, color: T.cyan, marginTop: 8, textAlign: 'center' }}>
+                              Vincita potenziale: <span style={{ ...T.orb, color: T.green }}>
+                                {fmt((Number(editedValues[stepIdx]?.importo || stepCorrente?.importo) * Number(editedValues[stepIdx]?.quota || p.match?.quota)))}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -357,12 +424,18 @@ export default function Scalata({ session }) {
             )}
 
             {/* Vinto / Perso */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
-                style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Vinto</button>
-              <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
-                style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Perso</button>
-            </div>
+            {selectedForStep[stepIdx] ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
+                  style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Vinto</button>
+                <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
+                  style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Perso</button>
+              </div>
+            ) : (
+              <div style={{ padding: '14px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 14, textAlign: 'center', ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.2)' }}>
+                ↑ Seleziona una partita per registrare l'esito
+              </div>
+            )}
           </div>
         )}
 

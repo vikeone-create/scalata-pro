@@ -12,8 +12,12 @@ const CRON_SECRET  = process.env.CRON_SECRET
 const APP_URL      = process.env.VITE_APP_URL || 'http://localhost:3000'
 
 const LEAGUES = [
-  { id:135, name:'Serie A', flag:'🇮🇹', season:2024 },
-  { id:2,   name:'Champions League', flag:'⭐', season:2024 },
+  { id:135, name:'Serie A',          flag:'🇮🇹', season:2024 },
+  { id:2,   name:'Champions League', flag:'⭐',  season:2024 },
+  { id:39,  name:'Premier League',   flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', season:2024 },
+  { id:140, name:'La Liga',          flag:'🇪🇸', season:2024 },
+  { id:78,  name:'Bundesliga',       flag:'🇩🇪', season:2024 },
+  { id:61,  name:'Ligue 1',          flag:'🇫🇷', season:2024 },
 ]
 
 const TEAM_NAME_MAP = {
@@ -44,10 +48,22 @@ async function getBetfairToken() {
 async function getBestOdds(homeTeam, awayTeam, date) {
   if (!ODDS_KEY) return null
   try {
-    const url = `https://api.the-odds-api.com/v4/sports/soccer_italy_serie_a/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFrom=${date}T00:00:00Z&dateTo=${date}T23:59:59Z`
-    const r = await fetch(url)
-    const games = await r.json()
-    if (!Array.isArray(games)) return null
+    // Cerca su tutte le leghe principali
+    const sports = [
+      'soccer_italy_serie_a',
+      'soccer_uefa_champs_league',
+      'soccer_epl',
+      'soccer_spain_la_liga',
+      'soccer_germany_bundesliga',
+      'soccer_france_ligue_one',
+    ]
+    let games = []
+    for (const sport of sports) {
+      const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFrom=${date}T00:00:00Z&dateTo=${date}T23:59:59Z`
+      const r = await fetch(url)
+      const data = await r.json()
+      if (Array.isArray(data)) games = games.concat(data)
+    }
 
     // Trova la partita
     const game = games.find(g =>

@@ -221,23 +221,31 @@ export default async function handler(req, res) {
     const betfairToken = await getBetfairToken()
     console.log(`[CRON] Betfair token: ${betfairToken ? 'OK' : 'N/D'}`)
 
-    // 0. Standings da football-data.org (gratis, illimitato)
-    const standingsMap = {}
-    for (const league of LEAGUES) {
-      try {
-        const r = await fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(league.name)}`)
-        const d = await r.json()
-        if (d?.standings) {
-          standingsMap[league.name] = d.standings
-          console.log(`[CRON] Standings ${league.name}: ${d.standings.length} squadre`)
-        }
-      } catch(e) { console.warn(`[CRON] Standings ${league.name} skip:`, e.message) }
-    }
+    // 1. Partite di oggi + standings in parallelo
+    const [allFixturesRaw, ...standingsResults] = await Promise.all([
+      // Fixtures da API-Football
+      Promise.all(LEAGUES.map(league =>
+        fb('fixtures', { league:league.id, season:league.season, date:today })
+          .then(fixtures => ({ league, fixtures }))
+      )),
+      // Standings da football-data.org (in parallelo, non bloccante)
+      ...LEAGUES.map(league =>
+        fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(league.name)}`)
+          .then(r => r.json())
+          .then(d => ({ league: league.name, standings: d?.standings || [] }))
+          .catch(() => ({ league: league.name, standings: [] }))
+      )
+    ])
 
-    // 1. Partite di oggi
+    // Mappa standings per lega
+    const standingsMap = {}
+    standingsResults.forEach(s => { standingsMap[s.league] = s.standings })
+    LEAGUES.forEach(l => console.log(`[CRON] Standings ${l.name}: ${standingsMap[l.name]?.length || 0}`))
+
+    // Processa fixtures
     const allFixtures = []
-    for (const league of LEAGUES) {
-      const fixtures = await fb('fixtures', { league:league.id, season:league.season, date:today })
+    for (const { league, fixtures } of allFixturesRaw) {
+      console.log(`[CRON] ${league.name}: ${fixtures.length} fixtures totali`)
       for (const f of fixtures) {
         if (!['NS','TBD'].includes(f.fixture?.status?.short)) continue
         allFixtures.push({

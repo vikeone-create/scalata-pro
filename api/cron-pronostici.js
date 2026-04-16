@@ -42,6 +42,46 @@ async function getBetfairToken() {
 }
 
 // Quote migliori da The Odds API per una partita
+// Recupera tutte le partite di oggi da The Odds API (fonte fixtures principale)
+async function getFixturesFromOddsAPI(date) {
+  if (!ODDS_KEY) return []
+  const SPORTS = [
+    { key: 'soccer_italy_serie_a',       name: 'Serie A',          flag: '🇮🇹' },
+    { key: 'soccer_uefa_champs_league',  name: 'Champions League', flag: '⭐' },
+    { key: 'soccer_uefa_europa_league',  name: 'Europa League',    flag: '🟠' },
+    { key: 'soccer_epl',                 name: 'Premier League',   flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+    { key: 'soccer_spain_la_liga',       name: 'La Liga',          flag: '🇪🇸' },
+    { key: 'soccer_germany_bundesliga',  name: 'Bundesliga',       flag: '🇩🇪' },
+    { key: 'soccer_france_ligue_one',    name: 'Ligue 1',          flag: '🇫🇷' },
+  ]
+  const fixtures = []
+  for (const sport of SPORTS) {
+    try {
+      const url = `https://api.the-odds-api.com/v4/sports/${sport.key}/odds/?apiKey=${ODDS_KEY}&regions=eu&markets=h2h&oddsFormat=decimal&dateFrom=${date}T00:00:00Z&dateTo=${date}T23:59:59Z`
+      const r = await fetch(url)
+      const games = await r.json()
+      if (!Array.isArray(games)) continue
+      for (const g of games) {
+        fixtures.push({
+          fixtureId: g.id,
+          home: g.home_team,
+          away: g.away_team,
+          homeId: null,
+          awayId: null,
+          league: sport.name,
+          leagueFlag: sport.flag,
+          date,
+          time: g.commence_time ? new Date(g.commence_time).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
+          fdSource: true,
+          oddsData: g, // salviamo già i dati odds per non rifetchare dopo
+        })
+      }
+      console.log(`[CRON] Odds API ${sport.name}: ${games.length} partite`)
+    } catch(e) { console.warn(`[CRON] Odds skip ${sport.name}:`, e.message) }
+  }
+  return fixtures
+}
+
 async function getBestOdds(homeTeam, awayTeam, date) {
   if (!ODDS_KEY) return null
   try {
@@ -221,44 +261,9 @@ export default async function handler(req, res) {
     const betfairToken = await getBetfairToken()
     console.log(`[CRON] Betfair token: ${betfairToken ? 'OK' : 'N/D'}`)
 
-    // 1. Fixtures di oggi — una sola chiamata football-data.org + Serie A da API-Football
-    const LEAGUE_NAMES_SUPPORTED = {
-      'UEFA Champions League': { name:'Champions League', flag:'⭐' },
-      'UEFA Europa League':    { name:'Europa League',    flag:'🟠' },
-      'Serie A':               { name:'Serie A',          flag:'🇮🇹' },
-      'Premier League':        { name:'Premier League',   flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
-      'Primera Division':      { name:'La Liga',          flag:'🇪🇸' },
-      'Bundesliga':            { name:'Bundesliga',       flag:'🇩🇪' },
-      'Ligue 1':               { name:'Ligue 1',          flag:'🇫🇷' },
-    }
-
-    // Fetch tutti i fixtures di oggi da football-data.org (1 chiamata sola)
-    const fdFixturesRes = await fetch(`${APP_URL}/api/footballdata?action=fixtures`)
-    const fdFixturesData = await fdFixturesRes.json()
-    const fdFixtures = fdFixturesData?.fixtures || []
-    console.log(`[CRON] football-data.org: ${fdFixtures.length} partite oggi`)
-
-    // Mappa in formato interno, filtra solo leghe supportate
-    const allFixtures = fdFixtures
-      .filter(f => LEAGUE_NAMES_SUPPORTED[f.league])
-      .map(f => {
-        const leagueInfo = LEAGUE_NAMES_SUPPORTED[f.league]
-        return {
-          fixtureId: f.fixtureId,
-          home: f.home,
-          away: f.away,
-          homeId: f.homeId,
-          awayId: f.awayId,
-          league: leagueInfo.name,
-          leagueFlag: leagueInfo.flag,
-          date: today,
-          time: f.time,
-          // homeId/awayId da football-data.org (diversi da API-Football)
-          fdSource: true,
-        }
-      })
-
-    console.log(`[CRON] Partite filtrate: ${allFixtures.length}`)
+    // 1. Fixtures di oggi da The Odds API (include CL, EL, Serie A, ecc.)
+    const allFixtures = await getFixturesFromOddsAPI(today)
+    console.log(`[CRON] Totale partite oggi: ${allFixtures.length}`)
     allFixtures.forEach(f => console.log(`[CRON]  → ${f.league}: ${f.home} vs ${f.away} ${f.time}`))
 
     // Standings in parallelo (non bloccante)
@@ -326,10 +331,28 @@ export default async function handler(req, res) {
         const totalTeams = standings.length || 20
         const legsContext = null
 
-        const [bestOdds, betfairOdds] = await Promise.all([
-          getBestOdds(f.home, f.away, today),
-          getBetfairOdds(f.home, f.away, today, betfairToken),
-        ])
+        // Quote — usa oddsData già caricato dal fixture se disponibile
+        let bestOdds = null
+        if (f.oddsData) {
+          let bestH = 0, bestD = 0, bestA = 0, bestHBook = '', bestDBook = '', bestABook = ''
+          for (const bm of (f.oddsData.bookmakers || [])) {
+            const h2h = bm.markets?.find(m => m.key === 'h2h')
+            if (!h2h) continue
+            for (const outcome of h2h.outcomes) {
+              if (outcome.name === f.oddsData.home_team && outcome.price > bestH) { bestH = outcome.price; bestHBook = bm.title }
+              if (outcome.name === 'Draw' && outcome.price > bestD) { bestD = outcome.price; bestDBook = bm.title }
+              if (outcome.name === f.oddsData.away_team && outcome.price > bestA) { bestA = outcome.price; bestABook = bm.title }
+            }
+          }
+          if (bestH > 0) bestOdds = {
+            home: { odds: bestH, bookmaker: bestHBook, impliedProb: Math.round(100/bestH*10)/10 },
+            draw: { odds: bestD, bookmaker: bestDBook, impliedProb: bestD ? Math.round(100/bestD*10)/10 : null },
+            away: { odds: bestA, bookmaker: bestABook, impliedProb: Math.round(100/bestA*10)/10 },
+          }
+        } else {
+          bestOdds = await getBestOdds(f.home, f.away, today)
+        }
+        const betfairOdds = await getBetfairOdds(f.home, f.away, today, betfairToken)
 
         // Poisson v2 con tutti i parametri
         const poissonRes = await fetch(`${APP_URL}/api/poisson`, {

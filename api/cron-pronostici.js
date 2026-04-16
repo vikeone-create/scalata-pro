@@ -14,10 +14,7 @@ const APP_URL      = process.env.VITE_APP_URL || 'http://localhost:3000'
 const LEAGUES = [
   { id:135, name:'Serie A',          flag:'🇮🇹', season:2024 },
   { id:2,   name:'Champions League', flag:'⭐',  season:2024 },
-  { id:39,  name:'Premier League',   flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', season:2024 },
-  { id:140, name:'La Liga',          flag:'🇪🇸', season:2024 },
-  { id:78,  name:'Bundesliga',       flag:'🇩🇪', season:2024 },
-  { id:61,  name:'Ligue 1',          flag:'🇫🇷', season:2024 },
+  { id:3,   name:'Europa League',    flag:'🟠',  season:2024 },
 ]
 
 const TEAM_NAME_MAP = {
@@ -178,6 +175,40 @@ function calcValue(poissonProb, marketOdds) {
   }
 }
 
+// Calcola importanza partita da standings
+function calcImportanzaPartita(homeStanding, awayStanding, totalTeams, league) {
+  if (!homeStanding && !awayStanding) return { label: null, tags: [] }
+  const tags = []
+  const relegationZone = totalTeams - 2  // ultime 3
+
+  if (homeStanding) {
+    if (homeStanding.position <= 4) tags.push('🏆 Casa lotta titolo/CL')
+    else if (homeStanding.position >= relegationZone) tags.push('🔻 Casa in zona retrocessione')
+    else if (homeStanding.position <= 6) tags.push('🎯 Casa lotta Europa')
+  }
+  if (awayStanding) {
+    if (awayStanding.position <= 4) tags.push('🏆 Trasferta lotta titolo/CL')
+    else if (awayStanding.position >= relegationZone) tags.push('🔻 Trasferta zona retrocessione')
+    else if (awayStanding.position <= 6) tags.push('🎯 Trasferta lotta Europa')
+  }
+
+  // Scontro diretto per posizione importante
+  if (homeStanding && awayStanding) {
+    const diff = Math.abs(homeStanding.position - awayStanding.position)
+    if (diff <= 3 && (homeStanding.position <= 6 || homeStanding.position >= relegationZone)) {
+      tags.push('⚡ Scontro diretto cruciale')
+    }
+  }
+
+  return {
+    home_pos: homeStanding?.position,
+    away_pos: awayStanding?.position,
+    home_pts: homeStanding?.points,
+    away_pts: awayStanding?.points,
+    tags,
+  }
+}
+
 export default async function handler(req, res) {
   if (req.headers['x-cron-secret'] !== CRON_SECRET) return res.status(401).json({ error:'Non autorizzato' })
   if (req.method !== 'POST') return res.status(405).end()
@@ -189,6 +220,19 @@ export default async function handler(req, res) {
     // Betfair session
     const betfairToken = await getBetfairToken()
     console.log(`[CRON] Betfair token: ${betfairToken ? 'OK' : 'N/D'}`)
+
+    // 0. Standings da football-data.org (gratis, illimitato)
+    const standingsMap = {}
+    for (const league of LEAGUES) {
+      try {
+        const r = await fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(league.name)}`)
+        const d = await r.json()
+        if (d?.standings) {
+          standingsMap[league.name] = d.standings
+          console.log(`[CRON] Standings ${league.name}: ${d.standings.length} squadre`)
+        }
+      } catch(e) { console.warn(`[CRON] Standings ${league.name} skip:`, e.message) }
+    }
 
     // 1. Partite di oggi
     const allFixtures = []
@@ -229,15 +273,25 @@ export default async function handler(req, res) {
         const homeModel = mapTeam(f.home)
         const awayModel = mapTeam(f.away)
 
-        // Dati paralleli: aggiungiamo H2H
-        const [lastHome, lastAway, injuries, h2h, bestOdds, betfairOdds] = await Promise.all([
-          fb('fixtures', { team:f.homeId, last:8 }),
-          fb('fixtures', { team:f.awayId, last:8 }),
+        // Dati paralleli: form + injuries (API-Football)
+        // H2H da football-data.org (gratis, non consuma budget)
+        const [lastHome, lastAway, injuries, h2hData, bestOdds, betfairOdds] = await Promise.all([
+          fb('fixtures', { team:f.homeId, last:6 }),
+          fb('fixtures', { team:f.awayId, last:6 }),
           fb('injuries', { fixture:f.fixtureId }),
-          fb('fixtures/headtohead', { h2h:`${f.homeId}-${f.awayId}`, last:5 }),
+          fetch(`${APP_URL}/api/footballdata?action=h2h&homeTeam=${encodeURIComponent(f.home)}&awayTeam=${encodeURIComponent(f.away)}`).then(r=>r.json()).catch(()=>({h2h:[]})),
           getBestOdds(f.home, f.away, today),
           getBetfairOdds(f.home, f.away, today, betfairToken),
         ])
+
+        const h2h = h2hData?.h2h || []
+
+        // Standings context — importanza partita
+        const standings = standingsMap[f.league] || []
+        const homeStanding = standings.find(s => s.team?.toLowerCase().includes(f.home.toLowerCase().split(' ')[0]))
+        const awayStanding = standings.find(s => s.team?.toLowerCase().includes(f.away.toLowerCase().split(' ')[0]))
+        const totalTeams = standings.length || 20
+        const legsContext = null // gestito separatamente per coppe
 
         // Form
         const processForm = (games, teamId) => games.map(g => {
@@ -266,20 +320,20 @@ export default async function handler(req, res) {
             leagueName: f.league,
             homeForm,
             awayForm,
-            h2h: h2h.map(g => ({
-              home: g.teams?.home?.name,
-              away: g.teams?.away?.name,
-              score: { home: g.goals?.home, away: g.goals?.away },
-            })),
+            h2h,
             homeInjuries: injuries.filter(i => i.team?.id === f.homeId),
             awayInjuries: injuries.filter(i => i.team?.id === f.awayId),
             homeDaysRest: daysSinceLastHome,
             awayDaysRest: daysSinceLastAway,
+            legsContext,
             withContext: true,
           }),
         })
         if (!poissonRes.ok) { console.warn(`[CRON] Poisson skip ${f.home}`); continue }
         const poisson = await poissonRes.json()
+
+        // Aggiungi contesto standings al pronostico
+        const importanzaPartita = calcImportanzaPartita(homeStanding, awayStanding, totalTeams, f.league)
 
         // Value analysis
         const valueAnalysis = {
@@ -355,6 +409,12 @@ export default async function handler(req, res) {
           form_adjusted: poisson.form_adjusted,
           home_form_score: poisson.home_form_score,
           away_form_score: poisson.away_form_score,
+          // Tutti i mercati (BTTS, O/U, multigol, corner, ecc.)
+          markets: poisson.markets,
+          // H2H
+          h2h: h2h.slice(0,5),
+          // Standings context
+          importanza: importanzaPartita,
           // Market data
           best_odds: bestOdds,
           betfair_odds: betfairOdds,

@@ -465,15 +465,41 @@ export default function Pronostici() {
           </div>
         )}
 
-        {/* Cards */}
-        {pronostici.map((p, i) => (
-          <CardPronostico
-            key={i}
-            p={p}
-            isOpen={expanded === i}
-            onToggle={() => setExpanded(expanded === i ? null : i)}
-          />
-        ))}
+        {/* Cards raggruppate per lega */}
+        {(() => {
+          const LEAGUE_ORDER = ['Champions League','Europa League','Serie A','Premier League','La Liga','Bundesliga','Ligue 1']
+          const grouped = {}
+          pronostici.forEach((p, i) => {
+            const league = p.fixture?.league || 'Altro'
+            if (!grouped[league]) grouped[league] = []
+            grouped[league].push({ p, i })
+          })
+          const sortedLeagues = Object.keys(grouped).sort((a,b) => {
+            const ia = LEAGUE_ORDER.indexOf(a)
+            const ib = LEAGUE_ORDER.indexOf(b)
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+          })
+          return sortedLeagues.map(league => (
+            <div key={league}>
+              {/* Header lega */}
+              <div style={{ display:'flex', alignItems:'center', gap:8, margin:'16px 0 8px', padding:'0 4px' }}>
+                <div style={{ ...T.sg, fontSize:11, fontWeight:700, letterSpacing:2, color:'rgba(245,240,232,0.35)', textTransform:'uppercase' }}>
+                  {grouped[league][0].p.fixture?.leagueFlag} {league}
+                </div>
+                <div style={{ flex:1, height:1, background:'rgba(255,255,255,0.06)' }}/>
+                <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.2)' }}>{grouped[league].length} partite</div>
+              </div>
+              {grouped[league].map(({ p, i }) => (
+                <CardPronostico
+                  key={i}
+                  p={p}
+                  isOpen={expanded === i}
+                  onToggle={() => setExpanded(expanded === i ? null : i)}
+                />
+              ))}
+            </div>
+          ))
+        })()}
 
         <div style={{ height:20 }}/>
       </div>

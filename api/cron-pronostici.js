@@ -62,6 +62,11 @@ async function getFixturesFromOddsAPI(date) {
       const games = await r.json()
       if (!Array.isArray(games)) continue
       for (const g of games) {
+        // Filtra solo partite di OGGI (in orario italiano)
+        const kickoff = new Date(g.commence_time)
+        const kickoffDate = kickoff.toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' }) // formato YYYY-MM-DD
+        if (kickoffDate !== date) continue
+
         fixtures.push({
           fixtureId: g.id,
           home: g.home_team,
@@ -284,10 +289,14 @@ export default async function handler(req, res) {
 
     console.log(`[CRON] ${allFixtures.length} partite trovate`)
 
+    // Ordina per priorità: CL e EL prima, poi campionati nazionali
+    const PRIORITY = { 'Champions League':1, 'Europa League':2, 'Serie A':3, 'Premier League':4, 'La Liga':5, 'Bundesliga':6, 'Ligue 1':7 }
+    allFixtures.sort((a,b) => (PRIORITY[a.league]||9) - (PRIORITY[b.league]||9))
+
     // 2. Analisi per ogni partita
     const pronostici = []
 
-    for (const f of allFixtures.slice(0,10)) {
+    for (const f of allFixtures.slice(0,12)) {
       try {
         const homeModel = mapTeam(f.home)
         const awayModel = mapTeam(f.away)

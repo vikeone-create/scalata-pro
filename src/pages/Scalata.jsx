@@ -60,6 +60,140 @@ function Spinner({ msg }) {
   )
 }
 
+// ─── AUTO IMPORT ESITO ────────────────────────────────────────────────────────
+function AutoImportEsito({ step, stepIdx, registraEsito, scalataAttiva, setScalataAttiva, persist }) {
+  const [risultatoAuto, setRisultatoAuto] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const match = step.matchScelto
+  const fmt = n => `€${Number(n).toFixed(2)}`
+
+  useEffect(() => {
+    if (!match?.home || !match?.away) { setLoading(false); return }
+    // Cerca in pronostici_storico la partita corrispondente
+    const checkResult = async () => {
+      try {
+        const { data } = await supabase
+          .from('pronostici_storico')
+          .select('*')
+          .eq('verificato', true)
+          .order('created_at', { ascending: false })
+          .limit(50)
+
+        if (!data?.length) { setLoading(false); return }
+
+        // Match fuzzy per nome squadra
+        const homeLower = match.home.toLowerCase()
+        const awayLower = match.away.toLowerCase()
+        const found = data.find(p => {
+          const ph = (p.home || '').toLowerCase()
+          const pa = (p.away || '').toLowerCase()
+          return (ph.includes(homeLower.split(' ')[0]) || homeLower.includes(ph.split(' ')[0])) &&
+                 (pa.includes(awayLower.split(' ')[0]) || awayLower.includes(pa.split(' ')[0]))
+        })
+
+        if (!found) { setLoading(false); return }
+
+        // Determina se l'esito scelto è vinto o perso
+        const esitoScelto = match.esito?.toLowerCase() || ''
+        const realEsito = found.real_esito // 'H', 'A', 'D'
+        let vinto = false
+        if (esitoScelto.includes('draw') || esitoScelto === 'x' || esitoScelto.includes('pareggio')) {
+          vinto = realEsito === 'D'
+        } else if (found.home?.toLowerCase().includes(esitoScelto.split(' ')[0]) || 
+                   esitoScelto.includes(found.home?.toLowerCase().split(' ')[0])) {
+          vinto = realEsito === 'H'
+        } else {
+          vinto = realEsito === 'A'
+        }
+
+        setRisultatoAuto({ found, vinto, realRisultato: found.real_risultato })
+      } catch(e) {}
+      setLoading(false)
+    }
+    checkResult()
+  }, [match?.home, match?.away])
+
+  const annullaScelta = () => {
+    const steps = scalataAttiva.steps.map((s, i) => i === stepIdx ? { ...s, matchScelto: null } : s)
+    const updated = { ...scalataAttiva, steps }
+    setScalataAttiva(updated)
+    persist({ scalata_attiva: updated })
+  }
+
+  return (
+    <div>
+      {/* Info partita piazzata */}
+      <div style={{ padding:'14px 16px', background:`${T.gold}06`, border:`1px solid ${T.gold}25`, borderRadius:14, marginBottom:10 }}>
+        <div style={{ ...T.sg, fontSize:10, color:`${T.gold}80`, letterSpacing:1, marginBottom:6 }}>⏳ GIOCATA IN ATTESA</div>
+        <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text, marginBottom:8 }}>
+          {match.home} <span style={{color:'rgba(245,240,232,0.25)'}}>vs</span> {match.away}
+        </div>
+        <div style={{ display:'flex', gap:16 }}>
+          <div>
+            <div style={{ ...T.label, marginBottom:2 }}>Hai puntato su</div>
+            <div style={{ ...T.sg, fontSize:12, color:T.cyan }}>{match.esito}</div>
+          </div>
+          <div>
+            <div style={{ ...T.label, marginBottom:2 }}>Quota</div>
+            <div style={{ ...T.orb, fontSize:14, color:T.text }}>{match.quota}</div>
+          </div>
+          <div>
+            <div style={{ ...T.label, marginBottom:2 }}>Importo</div>
+            <div style={{ ...T.orb, fontSize:14, color:T.text }}>{fmt(match.importo || step.importo)}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Auto-import se risultato disponibile */}
+      {loading ? (
+        <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.25)', textAlign:'center', padding:'8px' }}>
+          Cerco risultato...
+        </div>
+      ) : risultatoAuto ? (
+        <div style={{ padding:'14px 16px', background: risultatoAuto.vinto ? `${T.green}08` : `${T.red}08`, border:`1px solid ${risultatoAuto.vinto ? T.green : T.red}30`, borderRadius:14, marginBottom:10 }}>
+          <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.4)', marginBottom:6 }}>✨ RISULTATO DISPONIBILE</div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+            <div>
+              <div style={{ ...T.orb, fontSize:22, color: risultatoAuto.vinto ? T.green : T.red }}>
+                {risultatoAuto.realRisultato || '?-?'}
+              </div>
+              <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.4)', marginTop:2 }}>
+                Risultato reale
+              </div>
+            </div>
+            <div style={{ ...T.sg, fontSize:14, fontWeight:700, color: risultatoAuto.vinto ? T.green : T.red }}>
+              {risultatoAuto.vinto ? '✓ VINTO' : '✗ PERSO'}
+            </div>
+          </div>
+          <button onClick={() => registraEsito(stepIdx, risultatoAuto.vinto ? 'vinto' : 'perso', match)}
+            style={{ width:'100%', padding:'12px', borderRadius:10, border:'none', background: risultatoAuto.vinto ? `${T.green}18` : `${T.red}18`, color: risultatoAuto.vinto ? T.green : T.red, ...T.sg, fontSize:14, fontWeight:700, cursor:'pointer' }}>
+            {risultatoAuto.vinto ? '✓ Importa — Vinto' : '✗ Importa — Perso'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.25)', textAlign:'center', padding:'4px 0 8px' }}>
+          La partita è finita? Registra il risultato:
+        </div>
+      )}
+
+      {/* Fallback manuale sempre disponibile */}
+      {!risultatoAuto && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:8 }}>
+          <button onClick={() => registraEsito(stepIdx, 'vinto', match)}
+            style={{ padding:'14px', background:`${T.green}0a`, border:`1px solid ${T.green}30`, borderRadius:14, color:T.green, ...T.sg, fontSize:14, fontWeight:700, cursor:'pointer' }}>✓ Vinto</button>
+          <button onClick={() => registraEsito(stepIdx, 'perso', match)}
+            style={{ padding:'14px', background:`${T.red}0a`, border:`1px solid ${T.red}30`, borderRadius:14, color:T.red, ...T.sg, fontSize:14, fontWeight:700, cursor:'pointer' }}>✗ Perso</button>
+        </div>
+      )}
+
+      <button onClick={annullaScelta}
+        style={{ width:'100%', padding:'8px', background:'transparent', border:'1px solid rgba(255,255,255,0.06)', borderRadius:10, color:'rgba(245,240,232,0.2)', ...T.sg, fontSize:10, cursor:'pointer' }}>
+        ✕ Annulla scelta partita
+      </button>
+    </div>
+  )
+}
+
 export default function Scalata({ session }) {
   const userId = session?.user?.id
   const [fase, setFase]           = useState('setup')
@@ -423,12 +557,43 @@ export default function Scalata({ session }) {
 
             {/* Vinto / Perso */}
             {selectedForStep[stepIdx] ? (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
-                  style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Vinto</button>
-                <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
-                  style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Perso</button>
+              <div>
+                {/* Bottone "Piazza la giocata" — salva la scelta senza registrare l'esito */}
+                <button onClick={() => {
+                  const match = selectedForStep[stepIdx]?.match
+                  const edited = editedValues[stepIdx] || {}
+                  const quotaUsata = Number(edited.quota) || match?.quota
+                  const importoUsato = Number(edited.importo) || stepCorrente?.importo
+                  // Salva matchScelto nello step senza marcarlo done
+                  const steps = scalataAttiva.steps.map((s, i) => i === stepIdx ? {
+                    ...s,
+                    matchScelto: { ...match, quota: quotaUsata, importo: importoUsato },
+                  } : s)
+                  const updated = { ...scalataAttiva, steps }
+                  setScalataAttiva(updated)
+                  persist({ scalata_attiva: updated })
+                  setSelectedForStep({})
+                }}
+                  style={{ width:'100%', padding:'14px', background:`${T.cyan}0a`, border:`1px solid ${T.cyan}30`, borderRadius:14, color:T.cyan, ...T.sg, fontSize:14, fontWeight:700, cursor:'pointer', marginBottom:8 }}>
+                  ⏳ Piazza la giocata — decidi l'esito dopo
+                </button>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
+                    style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Già vinto</button>
+                  <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
+                    style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Già perso</button>
+                </div>
               </div>
+            ) : stepCorrente?.matchScelto ? (
+              /* Partita piazzata — auto-import o manuale */
+              <AutoImportEsito
+                step={stepCorrente}
+                stepIdx={stepIdx}
+                registraEsito={registraEsito}
+                scalataAttiva={scalataAttiva}
+                setScalataAttiva={setScalataAttiva}
+                persist={persist}
+              />
             ) : (
               <div style={{ padding: '14px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 14, textAlign: 'center', ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.2)' }}>
                 ↑ Seleziona una partita per registrare l'esito

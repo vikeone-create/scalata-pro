@@ -9,7 +9,7 @@ const SPORTS = [
   { key: 'soccer_germany_bundesliga',    label: '🇩🇪 Bundesliga' },
   { key: 'soccer_uefa_champs_league',    label: '🏆 Champions League' },
 ]
-const N_GIOCATE = [3, 5, 8, 12]
+const N_GIOCATE = [3, 5, 8, 12, 16, 20, 25]
 
 function calcQuotaMedia(c, o, n) { return Math.pow(o / c, 1 / n) }
 function classificaTipo(q) {
@@ -66,7 +66,6 @@ export default function Scalata({ session }) {
   const [capitale, setCapitale]   = useState('')
   const [obiettivo, setObiettivo] = useState('')
   const [nGiocate, setNGiocate]   = useState(null)
-  const [sport, setSport]         = useState('soccer_italy_serie_a')
   const [scalataAttiva, setScalataAttiva] = useState(null)
   const [partiteConsigliate, setPartiteConsigliate] = useState([])
   const [loadingMsg, setLoadingMsg] = useState('')
@@ -100,7 +99,7 @@ export default function Scalata({ session }) {
     try {
       const quotaMedia = +opz.quota.toFixed(2)
       setLoadingMsg('Raccolta quote live...')
-      const oddsRes = await fetch(`/api/odds?sport=${sport}&quotaMin=${opz.range.min}&quotaMax=${opz.range.max}`)
+      const oddsRes = await fetch(`/api/odds?quotaMin=${opz.range.min}&quotaMax=${opz.range.max}`)
       const odds = await oddsRes.json()
       if (!odds?.length) throw new Error('Nessuna partita disponibile. Prova un campionato o numero giocate diverso.')
       setLoadingMsg('Analisi AI delle partite...')
@@ -117,7 +116,7 @@ export default function Scalata({ session }) {
         steps: calcScalata(cap, obj, quotaMedia),
         stepCorrente: 0, bankrollCorrente: cap,
         createdAt: new Date().toISOString(), status: 'attiva',
-        partiteConsigliate: aiData.partite_consigliate || [], sport,
+        partiteConsigliate: aiData.partite_consigliate || [],
       }
       setScalataAttiva(scalata); setPartiteConsigliate(aiData.partite_consigliate || [])
       persist({ scalata_attiva: scalata }); setFase('scalata')
@@ -245,14 +244,13 @@ export default function Scalata({ session }) {
           </div>
         )}
 
-        {/* Campionato */}
+        {/* Leghe — ora automatico (tutte) */}
         {isValido && (
           <div style={{ marginBottom: 20 }}>
-            <div style={T.label}>Campionato</div>
-            <select value={sport} onChange={e => setSport(e.target.value)}
-              style={{ ...T.input, fontSize: 14 }}>
-              {SPORTS.map(s => <option key={s.key} value={s.key} style={{ background: T.bg }}>{s.label}</option>)}
-            </select>
+            <div style={T.label}>Leghe</div>
+            <div style={{ ...T.sg, fontSize:12, color:`${T.cyan}90`, padding:'10px 14px', background:`${T.cyan}08`, border:`1px solid ${T.cyan}20`, borderRadius:10 }}>
+              🌍 Tutte le leghe — Serie A, Premier, La Liga, Bundesliga, Ligue 1, Champions, Europa League
+            </div>
           </div>
         )}
 

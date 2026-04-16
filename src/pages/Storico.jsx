@@ -105,8 +105,9 @@ function calcolaProssimaGiocata(scalata) {
   return {importo:+importo.toFixed(2),quota:+quotaMedia.toFixed(2),vincitaPotenziale:+(importo*quotaMedia).toFixed(2),step:(stepCorrente||0)+1}
 }
 
-function TabScalate({storico}) {
-  const [expanded,setExpanded]=useState(null)
+function TabScalate({ storico, onDelete }) {
+  const [expanded, setExpanded] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const completate=storico.filter(s=>s.status==='completata')
   const fallite=storico.filter(s=>s.status==='fallita')
   const totProfitto=completate.reduce((a,s)=>a+(s.obiettivo-s.capitale),0)
@@ -166,8 +167,8 @@ function TabScalate({storico}) {
                     </div>
                     <div style={{fontFamily:"'Space Grotesk', sans-serif",fontSize:11,color:'rgba(245,240,232,0.3)'}}>{fmtDate(s.createdAt)}</div>
                   </div>
-                  <div style={{textAlign:'right'}}>
-                    <div style={{fontFamily:"'Space Grotesk', sans-serif",fontSize:10,padding:'3px 10px',borderRadius:99,background:`${st.color}15`,border:`1px solid ${st.color}33`,color:st.color,fontWeight:600,marginBottom:6}}>{st.label}</div>
+                  <div style={{textAlign:'right',display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
+                    <div style={{fontFamily:"'Space Grotesk', sans-serif",fontSize:10,padding:'3px 10px',borderRadius:99,background:`${st.color}15`,border:`1px solid ${st.color}33`,color:st.color,fontWeight:600}}>{st.label}</div>
                     <div style={{...C.serif,fontSize:16,color:profitto>=0?C.green:'#ff4444'}}>{profitto>=0?'+':''}{fmt(profitto)}</div>
                   </div>
                 </div>
@@ -218,7 +219,7 @@ function TabScalate({storico}) {
                     </div>
                   )}
                   <div style={C.label}>Step dettagliati</div>
-                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                  <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
                     {(s.steps||[]).map((step,j)=>{
                       if(!step.done) return (
                         <div key={j} style={{padding:'10px 14px',background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.05)',borderRadius:10,opacity:0.4}}>
@@ -254,6 +255,28 @@ function TabScalate({storico}) {
                       )
                     })}
                   </div>
+
+                  {/* Bottone elimina */}
+                  {confirmDelete === i ? (
+                    <div style={{padding:'12px 14px',background:'rgba(255,68,68,0.06)',border:'1px solid rgba(255,68,68,0.2)',borderRadius:10}}>
+                      <div style={{fontFamily:"'Space Grotesk', sans-serif",fontSize:12,color:'rgba(245,240,232,0.6)',marginBottom:10}}>Eliminare questa scalata dallo storico?</div>
+                      <div style={{display:'flex',gap:8}}>
+                        <button onClick={e=>{e.stopPropagation();onDelete(i);setConfirmDelete(null);setExpanded(null)}}
+                          style={{flex:1,padding:'8px',borderRadius:8,border:'none',background:'rgba(255,68,68,0.15)',color:'#ff6666',fontFamily:"'Space Grotesk', sans-serif",fontSize:12,fontWeight:700,cursor:'pointer'}}>
+                          Sì, elimina
+                        </button>
+                        <button onClick={e=>{e.stopPropagation();setConfirmDelete(null)}}
+                          style={{flex:1,padding:'8px',borderRadius:8,border:'none',background:'rgba(255,255,255,0.05)',color:'rgba(245,240,232,0.5)',fontFamily:"'Space Grotesk', sans-serif",fontSize:12,cursor:'pointer'}}>
+                          Annulla
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={e=>{e.stopPropagation();setConfirmDelete(i)}}
+                      style={{width:'100%',padding:'10px',borderRadius:10,border:'1px solid rgba(255,68,68,0.2)',background:'rgba(255,68,68,0.04)',color:'rgba(255,100,100,0.7)',fontFamily:"'Space Grotesk', sans-serif",fontSize:12,cursor:'pointer',marginTop:4}}>
+                      🗑 Elimina scalata
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -450,6 +473,14 @@ export default function Storico() {
     }).catch(()=>setLoadingPron(false))
   },[tab,pronCaricati])
 
+  const handleDeleteScalata = async (index) => {
+    const nuovoStorico = storico.filter((_, i) => i !== index)
+    setStorico(nuovoStorico)
+    await supabase.from('user_data')
+      .update({ storico: nuovoStorico })
+      .eq('user_id', userId)
+  }
+
   if(loadingScalate&&tab==='scalate') return (
     <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div style={{width:32,height:32,borderRadius:'50%',border:`2px solid rgba(0,212,255,0.1)`,borderTop:`2px solid ${C.cyan}`,animation:'spin 1s linear infinite'}}/>
@@ -475,7 +506,7 @@ export default function Storico() {
         </div>
 
         {tab==='scalate'
-          ?<TabScalate storico={storico}/>
+          ?<TabScalate storico={storico} onDelete={handleDeleteScalata}/>
           :<TabPronostici pronostici={pronostici} stats={stats} loading={loadingPron}/>
         }
       </div>

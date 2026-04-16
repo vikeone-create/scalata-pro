@@ -221,14 +221,31 @@ export default async function handler(req, res) {
     const betfairToken = await getBetfairToken()
     console.log(`[CRON] Betfair token: ${betfairToken ? 'OK' : 'N/D'}`)
 
-    // 1. Partite di oggi + standings in parallelo
+    // 1. Fixtures in parallelo — API-Football per Serie A, football-data.org per CL/EL
+    const fixturePromises = LEAGUES.map(league => {
+      if (league.id === 135) {
+        // Serie A → API-Football
+        return fb('fixtures', { league: league.id, season: league.season, date: today })
+          .then(fixtures => ({ league, fixtures: fixtures.map(f => ({
+            fixtureId: f.fixture?.id,
+            home: f.teams?.home?.name,
+            away: f.teams?.away?.name,
+            homeId: f.teams?.home?.id,
+            awayId: f.teams?.away?.id,
+            status: f.fixture?.status?.short,
+            time: f.fixture?.date ? new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
+          })) }))
+      } else {
+        // CL/EL → football-data.org (gratuito, include coppe europee)
+        return fetch(`${APP_URL}/api/footballdata?action=fixtures&league=${encodeURIComponent(league.name)}`)
+          .then(r => r.json())
+          .then(d => ({ league, fixtures: d?.fixtures || [] }))
+          .catch(() => ({ league, fixtures: [] }))
+      }
+    })
+
     const [allFixturesRaw, ...standingsResults] = await Promise.all([
-      // Fixtures da API-Football
-      Promise.all(LEAGUES.map(league =>
-        fb('fixtures', { league:league.id, season:league.season, date:today })
-          .then(fixtures => ({ league, fixtures }))
-      )),
-      // Standings da football-data.org (in parallelo, non bloccante)
+      Promise.all(fixturePromises),
       ...LEAGUES.map(league =>
         fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(league.name)}`)
           .then(r => r.json())
@@ -247,7 +264,10 @@ export default async function handler(req, res) {
     for (const { league, fixtures } of allFixturesRaw) {
       console.log(`[CRON] ${league.name}: ${fixtures.length} fixtures totali`)
       for (const f of fixtures) {
-        if (!['NS','TBD'].includes(f.fixture?.status?.short)) continue
+        // Accetta sia status API-Football (NS/TBD) che football-data.org (SCHEDULED/TIMED)
+        const status = f.status || ''
+        const isScheduled = ['NS','TBD','SCHEDULED','TIMED','IN_PLAY'].includes(status)
+        if (!isScheduled && status !== '') continue
         allFixtures.push({
           fixtureId: f.fixture?.id,
           home: f.teams?.home?.name,

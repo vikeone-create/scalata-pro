@@ -68,10 +68,13 @@ export default async function handler(req, res) {
 
   // ── FIXTURES (tutte le partite di oggi) ──
   if (action === 'fixtures') {
-    // Usa /v4/matches che restituisce tutte le partite di oggi per le leghe disponibili
     const today = new Date().toISOString().split('T')[0]
-    const data = await fdFetch(`/matches?dateFrom=${today}&dateTo=${today}`)
-    if (!data) return res.status(500).json({ error: 'Errore football-data.org' })
+    // Usa range +1 giorno per coprire differenze timezone
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+    const data = await fdFetch(`/matches?dateFrom=${today}&dateTo=${tomorrow}`)
+    if (!data) return res.status(500).json({ error: 'Errore football-data.org', raw: null })
+
+    console.log(`[FD] Matches totali: ${data.matches?.length || 0}, resultSet:`, data.resultSet)
 
     const fixtures = (data.matches || [])
       .filter(m => ['SCHEDULED','TIMED','IN_PLAY'].includes(m.status))
@@ -85,9 +88,19 @@ export default async function handler(req, res) {
         leagueCode: m.competition?.code,
         time: m.utcDate ? new Date(m.utcDate).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
         status: m.status,
+        utcDate: m.utcDate,
       }))
-    console.log(`[FD] Partite oggi: ${fixtures.length}`)
-    return res.status(200).json({ fixtures })
+
+    return res.status(200).json({
+      fixtures,
+      debug: {
+        today,
+        tomorrow,
+        total_matches: data.matches?.length || 0,
+        resultSet: data.resultSet,
+        competitions: [...new Set((data.matches||[]).map(m => m.competition?.name))],
+      }
+    })
   }
 
   // ── STANDINGS ──

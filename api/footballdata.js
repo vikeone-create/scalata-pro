@@ -66,23 +66,27 @@ export default async function handler(req, res) {
 
   const { action, league, homeTeam, awayTeam } = req.query
 
-  // ── FIXTURES ──
+  // ── FIXTURES (tutte le partite di oggi) ──
   if (action === 'fixtures') {
-    const code = LEAGUE_CODE[league]
-    if (!code) return res.status(400).json({ error: 'Lega non supportata' })
+    // Usa /v4/matches che restituisce tutte le partite di oggi per le leghe disponibili
     const today = new Date().toISOString().split('T')[0]
-    const data = await fdFetch(`/competitions/${code}/matches?dateFrom=${today}&dateTo=${today}&status=SCHEDULED,TIMED,IN_PLAY`)
+    const data = await fdFetch(`/matches?dateFrom=${today}&dateTo=${today}`)
     if (!data) return res.status(500).json({ error: 'Errore football-data.org' })
 
-    const fixtures = (data.matches || []).map(m => ({
-      fixtureId: m.id,
-      home: m.homeTeam?.name,
-      away: m.awayTeam?.name,
-      homeId: m.homeTeam?.id,
-      awayId: m.awayTeam?.id,
-      time: m.utcDate ? new Date(m.utcDate).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
-      status: m.status,
-    }))
+    const fixtures = (data.matches || [])
+      .filter(m => ['SCHEDULED','TIMED','IN_PLAY'].includes(m.status))
+      .map(m => ({
+        fixtureId: m.id,
+        home: m.homeTeam?.name,
+        away: m.awayTeam?.name,
+        homeId: m.homeTeam?.id,
+        awayId: m.awayTeam?.id,
+        league: m.competition?.name,
+        leagueCode: m.competition?.code,
+        time: m.utcDate ? new Date(m.utcDate).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
+        status: m.status,
+      }))
+    console.log(`[FD] Partite oggi: ${fixtures.length}`)
     return res.status(200).json({ fixtures })
   }
 

@@ -221,70 +221,56 @@ export default async function handler(req, res) {
     const betfairToken = await getBetfairToken()
     console.log(`[CRON] Betfair token: ${betfairToken ? 'OK' : 'N/D'}`)
 
-    // 1. Fixtures in parallelo — API-Football per Serie A, football-data.org per CL/EL
-    const fixturePromises = LEAGUES.map(league => {
-      if (league.id === 135) {
-        // Serie A → API-Football
-        return fb('fixtures', { league: league.id, season: league.season, date: today })
-          .then(fixtures => ({ league, fixtures: fixtures.map(f => ({
-            fixtureId: f.fixture?.id,
-            home: f.teams?.home?.name,
-            away: f.teams?.away?.name,
-            homeId: f.teams?.home?.id,
-            awayId: f.teams?.away?.id,
-            status: f.fixture?.status?.short,
-            time: f.fixture?.date ? new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'}) : '--:--',
-          })) }))
-      } else {
-        // CL/EL → football-data.org (gratuito, include coppe europee)
-        return fetch(`${APP_URL}/api/footballdata?action=fixtures&league=${encodeURIComponent(league.name)}`)
-          .then(r => r.json())
-          .then(d => ({ league, fixtures: d?.fixtures || [] }))
-          .catch(() => ({ league, fixtures: [] }))
-      }
-    })
-
-    const [allFixturesRaw, ...standingsResults] = await Promise.all([
-      Promise.all(fixturePromises),
-      ...LEAGUES.map(league =>
-        fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(league.name)}`)
-          .then(r => r.json())
-          .then(d => ({ league: league.name, standings: d?.standings || [] }))
-          .catch(() => ({ league: league.name, standings: [] }))
-      )
-    ])
-
-    // Mappa standings per lega
-    const standingsMap = {}
-    standingsResults.forEach(s => { standingsMap[s.league] = s.standings })
-    LEAGUES.forEach(l => console.log(`[CRON] Standings ${l.name}: ${standingsMap[l.name]?.length || 0}`))
-
-    // Processa fixtures
-    const allFixtures = []
-    for (const { league, fixtures } of allFixturesRaw) {
-      console.log(`[CRON] ${league.name}: ${fixtures.length} fixtures totali`)
-      for (const f of fixtures) {
-        // Accetta sia status API-Football (NS/TBD) che football-data.org (SCHEDULED/TIMED)
-        const status = f.status || ''
-        const isScheduled = ['NS','TBD','SCHEDULED','TIMED','IN_PLAY'].includes(status)
-        if (!isScheduled && status !== '') continue
-        allFixtures.push({
-          fixtureId: f.fixture?.id,
-          home: f.teams?.home?.name,
-          away: f.teams?.away?.name,
-          homeId: f.teams?.home?.id,
-          awayId: f.teams?.away?.id,
-          league: league.name,
-          leagueFlag: league.flag,
-          leagueId: league.id,
-          season: league.season,
-          date: today,
-          time: f.fixture?.date
-            ? new Date(f.fixture.date).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Rome'})
-            : '--:--',
-        })
-      }
+    // 1. Fixtures di oggi — una sola chiamata football-data.org + Serie A da API-Football
+    const LEAGUE_NAMES_SUPPORTED = {
+      'UEFA Champions League': { name:'Champions League', flag:'⭐' },
+      'UEFA Europa League':    { name:'Europa League',    flag:'🟠' },
+      'Serie A':               { name:'Serie A',          flag:'🇮🇹' },
+      'Premier League':        { name:'Premier League',   flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
+      'Primera Division':      { name:'La Liga',          flag:'🇪🇸' },
+      'Bundesliga':            { name:'Bundesliga',       flag:'🇩🇪' },
+      'Ligue 1':               { name:'Ligue 1',          flag:'🇫🇷' },
     }
+
+    // Fetch tutti i fixtures di oggi da football-data.org (1 chiamata sola)
+    const fdFixturesRes = await fetch(`${APP_URL}/api/footballdata?action=fixtures`)
+    const fdFixturesData = await fdFixturesRes.json()
+    const fdFixtures = fdFixturesData?.fixtures || []
+    console.log(`[CRON] football-data.org: ${fdFixtures.length} partite oggi`)
+
+    // Mappa in formato interno, filtra solo leghe supportate
+    const allFixtures = fdFixtures
+      .filter(f => LEAGUE_NAMES_SUPPORTED[f.league])
+      .map(f => {
+        const leagueInfo = LEAGUE_NAMES_SUPPORTED[f.league]
+        return {
+          fixtureId: f.fixtureId,
+          home: f.home,
+          away: f.away,
+          homeId: f.homeId,
+          awayId: f.awayId,
+          league: leagueInfo.name,
+          leagueFlag: leagueInfo.flag,
+          date: today,
+          time: f.time,
+          // homeId/awayId da football-data.org (diversi da API-Football)
+          fdSource: true,
+        }
+      })
+
+    console.log(`[CRON] Partite filtrate: ${allFixtures.length}`)
+    allFixtures.forEach(f => console.log(`[CRON]  → ${f.league}: ${f.home} vs ${f.away} ${f.time}`))
+
+    // Standings in parallelo (non bloccante)
+    const standingsMap = {}
+    const uniqueLeagues = [...new Set(allFixtures.map(f => f.league))]
+    await Promise.all(uniqueLeagues.map(leagueName =>
+      fetch(`${APP_URL}/api/footballdata?action=standings&league=${encodeURIComponent(leagueName)}`)
+        .then(r => r.json())
+        .then(d => { if (d?.standings) standingsMap[leagueName] = d.standings })
+        .catch(() => {})
+    ))
+    console.log(`[CRON] Standings caricati per: ${Object.keys(standingsMap).join(', ')||'nessuna'}`)
 
     if (!allFixtures.length) {
       await supabase.from('pronostici_giornalieri').upsert({ data:today, pronostici:[], note:'Nessuna partita oggi', generato_alle:new Date().toISOString() }, { onConflict:'data' })
@@ -301,43 +287,49 @@ export default async function handler(req, res) {
         const homeModel = mapTeam(f.home)
         const awayModel = mapTeam(f.away)
 
-        // Dati paralleli: form + injuries (API-Football)
-        // H2H da football-data.org (gratis, non consuma budget)
-        const [lastHome, lastAway, injuries, h2hData, bestOdds, betfairOdds] = await Promise.all([
-          fb('fixtures', { team:f.homeId, last:6 }),
-          fb('fixtures', { team:f.awayId, last:6 }),
-          fb('injuries', { fixture:f.fixtureId }),
-          fetch(`${APP_URL}/api/footballdata?action=h2h&homeTeam=${encodeURIComponent(f.home)}&awayTeam=${encodeURIComponent(f.away)}`).then(r=>r.json()).catch(()=>({h2h:[]})),
-          getBestOdds(f.home, f.away, today),
-          getBetfairOdds(f.home, f.away, today, betfairToken),
-        ])
+        // Per partite da football-data.org non abbiamo gli ID API-Football
+        // quindi usiamo solo Poisson + quote (senza form live)
+        let homeForm = [], awayForm = [], injuries = []
+        let daysSinceLastHome = 7, daysSinceLastAway = 7
 
+        if (!f.fdSource && f.homeId && f.awayId) {
+          // Solo per Serie A via API-Football abbiamo gli ID giusti
+          const [lastHome, lastAway, inj] = await Promise.all([
+            fb('fixtures', { team:f.homeId, last:6 }),
+            fb('fixtures', { team:f.awayId, last:6 }),
+            fb('injuries', { fixture:f.fixtureId }),
+          ])
+          const processForm = (games, teamId) => games.map(g => {
+            const isH = g.teams?.home?.id === teamId
+            const s = isH ? g.goals?.home : g.goals?.away
+            const c = isH ? g.goals?.away : g.goals?.home
+            return { result: s>c?'W':s<c?'L':'D', scored:s, conceded:c }
+          })
+          homeForm = processForm(lastHome, f.homeId)
+          awayForm = processForm(lastAway, f.awayId)
+          injuries = inj
+          daysSinceLastHome = lastHome[0]?.fixture?.date
+            ? Math.floor((Date.now() - new Date(lastHome[0].fixture.date)) / 86400000) : 7
+          daysSinceLastAway = lastAway[0]?.fixture?.date
+            ? Math.floor((Date.now() - new Date(lastAway[0].fixture.date)) / 86400000) : 7
+        }
+
+        // H2H da football-data.org
+        const h2hData = await fetch(`${APP_URL}/api/footballdata?action=h2h&homeTeam=${encodeURIComponent(f.home)}&awayTeam=${encodeURIComponent(f.away)}`)
+          .then(r => r.json()).catch(() => ({ h2h: [] }))
         const h2h = h2hData?.h2h || []
 
-        // Standings context — importanza partita
+        // Standings context + quote in parallelo
         const standings = standingsMap[f.league] || []
         const homeStanding = standings.find(s => s.team?.toLowerCase().includes(f.home.toLowerCase().split(' ')[0]))
         const awayStanding = standings.find(s => s.team?.toLowerCase().includes(f.away.toLowerCase().split(' ')[0]))
         const totalTeams = standings.length || 20
-        const legsContext = null // gestito separatamente per coppe
+        const legsContext = null
 
-        // Form
-        const processForm = (games, teamId) => games.map(g => {
-          const isH = g.teams?.home?.id === teamId
-          const s = isH ? g.goals?.home : g.goals?.away
-          const c = isH ? g.goals?.away : g.goals?.home
-          return { result: s>c?'W':s<c?'L':'D', scored:s, conceded:c, opponent: isH?g.teams?.away?.name:g.teams?.home?.name, venue:isH?'H':'A' }
-        })
-        const homeForm = processForm(lastHome, f.homeId)
-        const awayForm = processForm(lastAway, f.awayId)
-
-        // Calcola giorni dall'ultima partita (stanchezza)
-        const daysSinceLastHome = lastHome[0]?.fixture?.date
-          ? Math.floor((Date.now() - new Date(lastHome[0].fixture.date)) / 86400000)
-          : 7
-        const daysSinceLastAway = lastAway[0]?.fixture?.date
-          ? Math.floor((Date.now() - new Date(lastAway[0].fixture.date)) / 86400000)
-          : 7
+        const [bestOdds, betfairOdds] = await Promise.all([
+          getBestOdds(f.home, f.away, today),
+          getBetfairOdds(f.home, f.away, today, betfairToken),
+        ])
 
         // Poisson v2 con tutti i parametri
         const poissonRes = await fetch(`${APP_URL}/api/poisson`, {

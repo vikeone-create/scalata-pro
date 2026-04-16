@@ -164,19 +164,39 @@ function CardPronostico({ p, isOpen, onToggle }) {
           </div>
         )}
 
-        {/* Preview mercati chiave */}
+        {/* Preview mercati — tutti i principali */}
         {m && (
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginTop:10 }}>
-            {[
-              { l:'GG', v:`${m.btts?.yes}%`, c: m.btts?.yes > 55 ? T.green : 'rgba(245,240,232,0.5)' },
-              { l:'O2.5', v:`${m.over_under?.['2_5']?.over}%`, c: m.over_under?.['2_5']?.over > 55 ? T.cyan : 'rgba(245,240,232,0.5)' },
-              { l:'DC 1X', v:`${m.doppia_chance?.['1X']}%`, c:'rgba(245,240,232,0.5)' },
-            ].map(s => (
-              <div key={s.l} style={{ background:'rgba(255,255,255,0.03)', borderRadius:8, padding:'6px', textAlign:'center' }}>
-                <div style={{ ...T.orb, fontSize:13, color:s.c }}>{s.v}</div>
-                <div style={{ ...T.label, marginBottom:0, marginTop:2, fontSize:8 }}>{s.l}</div>
-              </div>
-            ))}
+          <div style={{ marginTop:10 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:5, marginBottom:5 }}>
+              {[
+                { l:'GG',    v:`${m.btts?.yes}%`,                 c: m.btts?.yes > 55 ? T.green : 'rgba(245,240,232,0.5)' },
+                { l:'NG',    v:`${m.btts?.no}%`,                  c: m.btts?.no > 55 ? T.green : 'rgba(245,240,232,0.5)' },
+                { l:'O1.5',  v:`${m.over_under?.['1_5']?.over}%`, c: m.over_under?.['1_5']?.over > 70 ? T.cyan : 'rgba(245,240,232,0.5)' },
+                { l:'O2.5',  v:`${m.over_under?.['2_5']?.over}%`, c: m.over_under?.['2_5']?.over > 55 ? T.cyan : 'rgba(245,240,232,0.5)' },
+                { l:'U2.5',  v:`${m.over_under?.['2_5']?.under}%`,c: m.over_under?.['2_5']?.under > 55 ? T.purple : 'rgba(245,240,232,0.5)' },
+                { l:'O3.5',  v:`${m.over_under?.['3_5']?.over}%`, c:'rgba(245,240,232,0.5)' },
+              ].map(s => (
+                <div key={s.l} style={{ background:'rgba(255,255,255,0.03)', borderRadius:8, padding:'6px 4px', textAlign:'center' }}>
+                  <div style={{ ...T.orb, fontSize:12, color:s.c }}>{s.v}</div>
+                  <div style={{ ...T.label, marginBottom:0, marginTop:1, fontSize:8 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:5 }}>
+              {[
+                { l:'DC 1X', v:`${m.doppia_chance?.['1X']}%`, c:'rgba(245,240,232,0.5)' },
+                { l:'DC X2', v:`${m.doppia_chance?.['X2']}%`, c:'rgba(245,240,232,0.5)' },
+                { l:'DC 12', v:`${m.doppia_chance?.['12']}%`, c:'rgba(245,240,232,0.5)' },
+                { l:'C O8.5', v:`${m.corners?.over_8_5}%`,   c: m.corners?.over_8_5 > 55 ? T.gold : 'rgba(245,240,232,0.5)' },
+                { l:'C U8.5', v:`${m.corners?.under_8_5}%`,  c:'rgba(245,240,232,0.5)' },
+                { l:'Corner', v:m.corners?.totale_stimati,    c:T.gold },
+              ].map(s => (
+                <div key={s.l} style={{ background:'rgba(255,255,255,0.03)', borderRadius:8, padding:'6px 4px', textAlign:'center' }}>
+                  <div style={{ ...T.orb, fontSize:12, color:s.c }}>{s.v}</div>
+                  <div style={{ ...T.label, marginBottom:0, marginTop:1, fontSize:8 }}>{s.l}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -230,8 +250,36 @@ function CardPronostico({ p, isOpen, onToggle }) {
             </div>
           )}
 
-          {/* Mercati completi */}
-          {m && (
+          {/* Risultati esatti a gruppi (stile Eurobet) */}
+          {m?.grouped_scores && (
+            <div style={{ marginBottom:14 }}>
+              <div style={T.label}>Risultati esatti a gruppi</div>
+              <div style={{ background:'rgba(255,255,255,0.02)', borderRadius:10, padding:'10px 12px' }}>
+                {[
+                  { label:'Casa +1 (1-0/2-1/3-2)',   key:'casa_1',           c:T.cyan },
+                  { label:'Casa +2 (2-0/3-1/3-0)',   key:'casa_1-0_2-0_3-0', c:T.cyan },
+                  { label:'Casa +2 (2-1/3-1/4-1)',   key:'casa_2-1_3-1_4-1', c:T.cyan },
+                  { label:'Pari senza gol (0-0)',     key:'x_0',              c:T.gold },
+                  { label:'Pari con gol (1-1/2-2/3-3)',key:'x_1-1_2-2_3-3', c:T.gold },
+                  { label:'Trasferta +1 (0-1/1-2)',  key:'away_1',           c:T.purple },
+                  { label:'Trasferta (0-1/0-2/0-3)', key:'away_0-1_0-2_0-3', c:T.purple },
+                  { label:'Trasferta (1-2/1-3/1-4)', key:'away_1-2_1-3_1-4', c:T.purple },
+                ].map(row => {
+                  const val = m.grouped_scores[row.key]
+                  if (!val) return null
+                  return (
+                    <div key={row.key} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                      <div style={{ flex:1, height:3, background:'rgba(255,255,255,0.05)', borderRadius:99 }}>
+                        <div style={{ height:'100%', width:`${Math.min(100, val*3)}%`, background:row.c, borderRadius:99, opacity:0.7 }}/>
+                      </div>
+                      <div style={{ ...T.orb, fontSize:11, color:row.c, minWidth:34, textAlign:'right' }}>{val}%</div>
+                      <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.35)', minWidth:160 }}>{row.label}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
             <div style={{ marginBottom:14 }}>
               <div style={T.label}>Mercati</div>
 

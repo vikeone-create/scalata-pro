@@ -397,6 +397,30 @@ function calcAllMarkets(matrix, xgH, xgA) {
   const htA = Math.round(pAway * 0.85 * 10) / 10
   const htX = Math.round((100 - htH - htA) * 10) / 10
 
+  // Risultati esatti a gruppi (stile Eurobet)
+  const grouped_scores = {
+    // Casa vince di 1 (1-0, 2-1, 3-2, 4-3)
+    'casa_1': Math.round((p((h,a) => h-a === 1)) * 10) / 10,
+    // Casa vince di 2+ (2-0, 3-1, 4-2, 3-0, 4-1, 5-2)
+    'casa_2p': Math.round((p((h,a) => h-a >= 2)) * 10) / 10,
+    // Trasferta vince di 1 (0-1, 1-2, 2-3, 3-4)
+    'away_1': Math.round((p((h,a) => a-h === 1)) * 10) / 10,
+    // Trasferta vince di 2+ (0-2, 1-3, 0-3, 1-4, 2-4)
+    'away_2p': Math.round((p((h,a) => a-h >= 2)) * 10) / 10,
+    // Pareggio senza gol (0-0)
+    'x_0': Math.round((p((h,a) => h === 0 && a === 0)) * 10) / 10,
+    // Pareggio con gol (1-1, 2-2, 3-3)
+    'x_gg': Math.round((p((h,a) => h === a && h > 0)) * 10) / 10,
+    // Gruppi Eurobet-style
+    'casa_1-0_2-0_3-0': Math.round((p((h,a) => a===0 && h>=1 && h<=3)) * 10) / 10,
+    'casa_2-1_3-1_4-1': Math.round((p((h,a) => a===1 && h>=2 && h<=4)) * 10) / 10,
+    'away_0-1_0-2_0-3': Math.round((p((h,a) => h===0 && a>=1 && a<=3)) * 10) / 10,
+    'away_1-2_1-3_1-4': Math.round((p((h,a) => h===1 && a>=2 && a<=4)) * 10) / 10,
+    'x_1-1_2-2_3-3':    Math.round((p((h,a) => h===a && h>=1 && h<=3)) * 10) / 10,
+    'alta_casa_4p':      Math.round((p((h,a) => h >= 4)) * 10) / 10,
+    'alta_away_4p':      Math.round((p((h,a) => a >= 4)) * 10) / 10,
+  }
+
   return {
     btts: { yes: btts_yes, no: btts_no },
     over_under: {
@@ -412,6 +436,7 @@ function calcAllMarkets(matrix, xgH, xgA) {
     combo_1x2_gg: combo,
     corners,
     primo_tempo: { casa: htH, pareggio: htX, trasferta: htA },
+    grouped_scores,
   }
 }
 

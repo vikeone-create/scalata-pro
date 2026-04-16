@@ -196,29 +196,48 @@ function AutoImportEsito({ step, stepIdx, registraEsito, scalataAttiva, setScala
 
 export default function Scalata({ session }) {
   const userId = session?.user?.id
-  const [fase, setFase]           = useState('setup')
+  const [fase, setFase]           = useState('lista') // 'lista' | 'setup' | 'caricamento' | 'scalata'
+  const [scalateAttive, setScalateAttive] = useState([]) // array scalate in corso
+  const [scalataAperta, setScalataAperta] = useState(null) // indice scalata aperta
   const [capitale, setCapitale]   = useState('')
   const [obiettivo, setObiettivo] = useState('')
   const [nGiocate, setNGiocate]   = useState(null)
-  const [scalataAttiva, setScalataAttiva] = useState(null)
   const [partiteConsigliate, setPartiteConsigliate] = useState([])
   const [loadingMsg, setLoadingMsg] = useState('')
   const [error, setError]         = useState(null)
   const [selectedForStep, setSelectedForStep] = useState({})
-  const [editedValues, setEditedValues] = useState({}) // { [stepIdx]: { quota, importo } }
+  const [editedValues, setEditedValues] = useState({})
+
+  // Scalata correntemente aperta
+  const scalataAttiva = scalataAperta !== null ? scalateAttive[scalataAperta] : null
 
   useEffect(() => {
     if (!userId) return
     loadData(userId).then(d => {
-      if (d?.scalata_attiva) {
-        setScalataAttiva(d.scalata_attiva)
+      // Migrazione vecchia struttura singola → array
+      if (d?.scalata_attiva && !d?.scalate_attive) {
+        const attive = [d.scalata_attiva]
+        setScalateAttive(attive)
+        saveData(userId, { scalate_attive: attive })
+        setScalataAperta(0)
         if (d.scalata_attiva.partiteConsigliate) setPartiteConsigliate(d.scalata_attiva.partiteConsigliate)
         setFase('scalata')
+      } else if (d?.scalate_attive?.length) {
+        setScalateAttive(d.scalate_attive)
+        setFase('lista')
       }
     })
   }, [userId])
 
-  const persist = patch => saveData(userId, patch)
+  const persistAttive = (nuove) => saveData(userId, { scalate_attive: nuove })
+  const persist = patch => {
+    // compat: se patch ha scalata_attiva, aggiorna quella aperta nell'array
+    if (patch.scalata_attiva && scalataAperta !== null) {
+      const nuove = scalateAttive.map((s, i) => i === scalataAperta ? patch.scalata_attiva : s)
+      setScalateAttive(nuove)
+      persistAttive(nuove)
+    }
+  }
   const cap = Number(capitale), obj = Number(obiettivo)
   const isValido = cap >= 1 && obj > cap && nGiocate !== null
   const opzioni = N_GIOCATE.map(n => {
@@ -252,10 +271,38 @@ export default function Scalata({ session }) {
         createdAt: new Date().toISOString(), status: 'attiva',
         partiteConsigliate: aiData.partite_consigliate || [],
       }
-      setScalataAttiva(scalata); setPartiteConsigliate(aiData.partite_consigliate || [])
-      persist({ scalata_attiva: scalata }); setFase('scalata')
+      const nuove = [...scalateAttive, scalata]
+      setScalateAttive(nuove)
+      setScalataAperta(nuove.length - 1)
+      setPartiteConsigliate(aiData.partite_consigliate || [])
+      persistAttive(nuove)
+      // Reset form
+      setCapitale(''); setObiettivo(''); setNGiocate(null)
+      setFase('scalata')
     } catch(e) { setError(e.message); setFase('setup') }
     setLoadingMsg('')
+  }
+
+  const setScalataAttiva = (updated) => {
+    const nuove = scalateAttive.map((s, i) => i === scalataAperta ? updated : s)
+    setScalateAttive(nuove)
+    persistAttive(nuove)
+  }
+
+  const apriScalata = (idx) => {
+    setScalataAperta(idx)
+    const s = scalateAttive[idx]
+    if (s?.partiteConsigliate) setPartiteConsigliate(s.partiteConsigliate)
+    setSelectedForStep({})
+    setEditedValues({})
+    setFase('scalata')
+  }
+
+  const chiudiScalata = () => {
+    setScalataAperta(null)
+    setPartiteConsigliate([])
+    setSelectedForStep({})
+    setFase('lista')
   }
 
   const registraEsito = (stepIndex, esito, matchUsato) => {
@@ -284,22 +331,29 @@ export default function Scalata({ session }) {
     if (esito === 'vinto' && bankrollCorrente >= scalataAttiva.obiettivo) status = 'completata'
     else if (esito === 'perso' && (bankrollCorrente <= 0 || stepCorrente >= steps.length)) status = 'fallita'
     const updated = { ...scalataAttiva, steps, stepCorrente, bankrollCorrente, status }
-    setScalataAttiva(updated); persist({ scalata_attiva: updated })
+    setScalataAttiva(updated)
     if (status !== 'attiva') {
       const closed = { ...updated, closedAt: new Date().toISOString() }
       loadData(userId).then(d => {
-        persist({ storico: [closed, ...(d?.storico || [])].slice(0, 100), scalata_attiva: null })
+        const nuoveAttive = scalateAttive.filter((_, i) => i !== scalataAperta)
+        saveData(userId, {
+          storico: [closed, ...(d?.storico || [])].slice(0, 100),
+          scalate_attive: nuoveAttive,
+        })
+        setScalateAttive(nuoveAttive)
       })
-      setTimeout(() => { setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setNGiocate(null); setCapitale(''); setObiettivo('') }, 1200)
+      setTimeout(() => { setScalataAperta(null); setPartiteConsigliate([]); setFase('lista') }, 1200)
     }
   }
 
   const abbandonaScalata = async () => {
-    if (!confirm('Abbandonare la scalata?')) return
+    if (!window.confirm('Abbandonare la scalata?')) return
     const closed = { ...scalataAttiva, status: 'abbandonata', closedAt: new Date().toISOString() }
     const d = await loadData(userId)
-    persist({ storico: [closed, ...(d?.storico || [])].slice(0, 100), scalata_attiva: null })
-    setScalataAttiva(null); setPartiteConsigliate([]); setFase('setup'); setNGiocate(null); setCapitale(''); setObiettivo('')
+    const nuoveAttive = scalateAttive.filter((_, i) => i !== scalataAperta)
+    saveData(userId, { storico: [closed, ...(d?.storico || [])].slice(0, 100), scalate_attive: nuoveAttive })
+    setScalateAttive(nuoveAttive)
+    setScalataAperta(null); setPartiteConsigliate([]); setFase('lista')
   }
 
   const stepIdx = scalataAttiva?.stepCorrente || 0
@@ -307,6 +361,79 @@ export default function Scalata({ session }) {
   const profitPct = scalataAttiva ? Math.min(100, Math.max(0, ((scalataAttiva.bankrollCorrente - scalataAttiva.capitale) / (scalataAttiva.obiettivo - scalataAttiva.capitale)) * 100)) : 0
 
   if (fase === 'caricamento') return <Spinner msg={loadingMsg} />
+
+  // ── LISTA SCALATE ATTIVE ──
+  if (fase === 'lista') return (
+    <div style={{ minHeight:'100vh', background:T.bg }}>
+      <style>{GLOBAL_CSS}</style>
+      <div style={T.page}>
+        <div style={{ marginBottom:20 }}>
+          <div style={{ ...T.orb, fontSize:26, fontWeight:700, letterSpacing:2, color:T.text }}>SCALATA</div>
+          <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.25)', marginTop:4 }}>Gestisci le tue scalate attive</div>
+        </div>
+
+        {/* Scalate in corso */}
+        {scalateAttive.length > 0 && (
+          <div style={{ marginBottom:20 }}>
+            <div style={T.label}>In corso — {scalateAttive.length}</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              {scalateAttive.map((s, i) => {
+                const stepFatti = s.steps?.filter(x => x.done).length || 0
+                const profitPct = Math.min(100, Math.max(0, ((s.bankrollCorrente - s.capitale) / (s.obiettivo - s.capitale)) * 100))
+                const inAttesa = s.steps?.[s.stepCorrente || 0]?.matchScelto
+                return (
+                  <div key={i} onClick={() => apriScalata(i)}
+                    style={{ ...T.card, padding:'16px', cursor:'pointer', border:`1px solid ${T.cyan}25`, position:'relative' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
+                      <div>
+                        <div style={{ ...T.orb, fontSize:18, color:T.text }}>{fmt(s.capitale)} <span style={{ fontSize:12, color:'rgba(245,240,232,0.3)' }}>→</span> {fmt(s.obiettivo)}</div>
+                        <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.3)', marginTop:2 }}>{s.nGiocate} giocate · {s.tipoLabel}</div>
+                      </div>
+                      <div style={{ textAlign:'right' }}>
+                        <div style={{ ...T.sg, fontSize:10, padding:'3px 10px', borderRadius:99, background:`${T.cyan}15`, border:`1px solid ${T.cyan}30`, color:T.cyan, fontWeight:700 }}>
+                          {inAttesa ? '⏳ IN ATTESA' : `STEP ${(s.stepCorrente||0)+1}/${s.steps?.length||0}`}
+                        </div>
+                        <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.3)', marginTop:6 }}>{stepFatti} / {s.steps?.length||0} giocate</div>
+                      </div>
+                    </div>
+                    {/* Progress bar */}
+                    <div style={{ height:3, background:'rgba(255,255,255,0.05)', borderRadius:99, overflow:'hidden', marginBottom:8 }}>
+                      <div style={{ height:'100%', width:`${profitPct}%`, background:`linear-gradient(90deg,${T.cyan},${T.purple})`, borderRadius:99 }}/>
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'space-between' }}>
+                      <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)' }}>
+                        Bankroll: <span style={{ color:T.text }}>{fmt(s.bankrollCorrente)}</span>
+                      </div>
+                      {inAttesa && (
+                        <div style={{ ...T.sg, fontSize:10, color:T.gold }}>
+                          ⏳ {inAttesa.home} vs {inAttesa.away}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ ...T.sg, fontSize:10, color:T.cyan, marginTop:8, textAlign:'right' }}>Continua →</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Nuova scalata */}
+        <button onClick={() => setFase('setup')}
+          style={{ width:'100%', padding:'16px', background:`linear-gradient(135deg, ${T.cyan}18, ${T.purple}18)`, border:`1px solid ${T.cyan}30`, borderRadius:14, color:T.cyan, ...T.orb, fontSize:14, fontWeight:700, cursor:'pointer', letterSpacing:2 }}>
+          + NUOVA SCALATA
+        </button>
+
+        {scalateAttive.length === 0 && (
+          <div style={{ textAlign:'center', padding:'60px 20px' }}>
+            <div style={{ fontSize:48, marginBottom:14, opacity:0.1 }}>📈</div>
+            <div style={{ ...T.sg, fontSize:14, color:'rgba(245,240,232,0.25)' }}>Nessuna scalata attiva</div>
+            <div style={{ ...T.sg, fontSize:12, color:'rgba(245,240,232,0.15)', marginTop:6 }}>Crea la prima scalata per iniziare</div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 
   // ── SETUP ──
   if (fase === 'setup') return (
@@ -325,10 +452,10 @@ export default function Scalata({ session }) {
           <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.25)', marginTop: 4 }}>Imposta la tua scalata</div>
         </div>
 
-        {scalataAttiva && (
-          <div style={{ ...T.cardGlow(T.cyan), padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ ...T.sg, fontSize: 12, color: T.cyan }}>Hai una scalata in corso</span>
-            <button onClick={() => setFase('scalata')} style={{ background: `${T.cyan}18`, border: `1px solid ${T.cyan}40`, borderRadius: 8, color: T.cyan, ...T.sg, fontSize: 11, padding: '5px 12px', cursor: 'pointer', fontWeight: 600 }}>Vai →</button>
+        {scalateAttive.length > 0 && (
+          <div style={{ padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background:`${T.cyan}08`, border:`1px solid ${T.cyan}25`, borderRadius:10 }}>
+            <span style={{ ...T.sg, fontSize: 12, color: T.cyan }}>{scalateAttive.length} scalata{scalateAttive.length>1?'e':''} in corso</span>
+            <button onClick={() => setFase('lista')} style={{ background: `${T.cyan}18`, border: `1px solid ${T.cyan}40`, borderRadius: 8, color: T.cyan, ...T.sg, fontSize: 11, padding: '5px 12px', cursor: 'pointer', fontWeight: 600 }}>Vedi →</button>
           </div>
         )}
 
@@ -404,10 +531,23 @@ export default function Scalata({ session }) {
   )
 
   // ── SCALATA ATTIVA ──
+  if (!scalataAttiva) return null
+
   return (
     <div style={{ minHeight: '100vh', background: T.bg }}>
       <style>{GLOBAL_CSS}</style>
       <div style={T.page}>
+
+        {/* Back to lista */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+          <button onClick={chiudiScalata}
+            style={{ background:'none', border:'none', color:'rgba(245,240,232,0.35)', cursor:'pointer', ...T.sg, fontSize:13, padding:0, display:'flex', alignItems:'center', gap:6 }}>
+            ← Tutte le scalate
+          </button>
+          <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.2)' }}>
+            {scalateAttive.length > 1 ? `Scalata ${(scalataAperta||0)+1} di ${scalateAttive.length}` : ''}
+          </div>
+        </div>
 
         {/* Hero bankroll */}
         <div style={{ ...T.card, padding: '20px', marginBottom: 22, animation: 'fadeUp 0.3s ease' }}>

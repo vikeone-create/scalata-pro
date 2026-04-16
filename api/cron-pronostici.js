@@ -509,8 +509,9 @@ export default async function handler(req, res) {
           verificato: false,
         }
         await supabase.from('pronostici_storico')
-          .insert(row)
-          .catch(e => console.warn('[CRON] Storico insert skip:', e.message))
+          try {
+            await supabase.from('pronostici_storico').insert(row)
+          } catch(e) { console.warn('[CRON] Storico insert skip:', e.message) }
       }
     }
 

@@ -397,28 +397,41 @@ function calcAllMarkets(matrix, xgH, xgA) {
   const htA = Math.round(pAway * 0.85 * 10) / 10
   const htX = Math.round((100 - htH - htA) * 10) / 10
 
-  // Risultati esatti a gruppi (stile Eurobet)
+  // Risultati esatti a gruppi — stile Eurobet
   const grouped_scores = {
-    // Casa vince di 1 (1-0, 2-1, 3-2, 4-3)
-    'casa_1': Math.round((p((h,a) => h-a === 1)) * 10) / 10,
-    // Casa vince di 2+ (2-0, 3-1, 4-2, 3-0, 4-1, 5-2)
-    'casa_2p': Math.round((p((h,a) => h-a >= 2)) * 10) / 10,
-    // Trasferta vince di 1 (0-1, 1-2, 2-3, 3-4)
-    'away_1': Math.round((p((h,a) => a-h === 1)) * 10) / 10,
-    // Trasferta vince di 2+ (0-2, 1-3, 0-3, 1-4, 2-4)
-    'away_2p': Math.round((p((h,a) => a-h >= 2)) * 10) / 10,
-    // Pareggio senza gol (0-0)
-    'x_0': Math.round((p((h,a) => h === 0 && a === 0)) * 10) / 10,
-    // Pareggio con gol (1-1, 2-2, 3-3)
-    'x_gg': Math.round((p((h,a) => h === a && h > 0)) * 10) / 10,
-    // Gruppi Eurobet-style
-    'casa_1-0_2-0_3-0': Math.round((p((h,a) => a===0 && h>=1 && h<=3)) * 10) / 10,
-    'casa_2-1_3-1_4-1': Math.round((p((h,a) => a===1 && h>=2 && h<=4)) * 10) / 10,
-    'away_0-1_0-2_0-3': Math.round((p((h,a) => h===0 && a>=1 && a<=3)) * 10) / 10,
-    'away_1-2_1-3_1-4': Math.round((p((h,a) => h===1 && a>=2 && a<=4)) * 10) / 10,
-    'x_1-1_2-2_3-3':    Math.round((p((h,a) => h===a && h>=1 && h<=3)) * 10) / 10,
-    'alta_casa_4p':      Math.round((p((h,a) => h >= 4)) * 10) / 10,
-    'alta_away_4p':      Math.round((p((h,a) => a >= 4)) * 10) / 10,
+    // Casa clean sheet leggero (1-0, 2-0, 3-0)
+    'casa_clean_light': Math.round((p((h,a) => a===0 && h>=1 && h<=3)) * 10) / 10,
+    // Casa con away che fa 1 (2-1, 3-1, 4-1)
+    'casa_away1': Math.round((p((h,a) => a===1 && h>=2 && h<=4)) * 10) / 10,
+    // Casa clean goleada (4-0, 5-0, 6-0)
+    'casa_clean_heavy': Math.round((p((h,a) => a===0 && h>=4 && h<=6)) * 10) / 10,
+    // Casa alta (3-2, 4-2, 4-3, 5-1)
+    'casa_high': Math.round((p((h,a) =>
+      (h===3&&a===2) || (h===4&&a===2) || (h===4&&a===3) || (h===5&&a===1)
+    )) * 10) / 10,
+    // Pareggio qualunque
+    'draw_any': Math.round((p((h,a) => h===a)) * 10) / 10,
+    // Trasferta clean leggero (0-1, 0-2, 0-3)
+    'away_clean_light': Math.round((p((h,a) => h===0 && a>=1 && a<=3)) * 10) / 10,
+    // Trasferta con casa che fa 1 (1-2, 1-3, 1-4)
+    'away_home1': Math.round((p((h,a) => h===1 && a>=2 && a<=4)) * 10) / 10,
+    // Trasferta clean goleada (0-4, 0-5, 0-6)
+    'away_clean_heavy': Math.round((p((h,a) => h===0 && a>=4 && a<=6)) * 10) / 10,
+    // Trasferta alta (2-3, 2-4, 3-4, 1-5)
+    'away_high': Math.round((p((h,a) =>
+      (h===2&&a===3) || (h===2&&a===4) || (h===3&&a===4) || (h===1&&a===5)
+    )) * 10) / 10,
+    // Altro (catturano tutto ciò che non rientra nei precedenti)
+    'sq1_altro': Math.round((p((h,a) => h > a &&
+      !(a===0 && h>=1 && h<=6) &&
+      !(a===1 && h>=2 && h<=4) &&
+      !((h===3&&a===2) || (h===4&&a===2) || (h===4&&a===3) || (h===5&&a===1))
+    )) * 10) / 10,
+    'sq2_altro': Math.round((p((h,a) => a > h &&
+      !(h===0 && a>=1 && a<=6) &&
+      !(h===1 && a>=2 && a<=4) &&
+      !((h===2&&a===3) || (h===2&&a===4) || (h===3&&a===4) || (h===1&&a===5))
+    )) * 10) / 10,
   }
 
   return {

@@ -135,23 +135,50 @@ function CardPronostico({ p, isOpen, onToggle }) {
           </div>
         </div>
 
-        {/* Squadre + risultato previsto */}
-        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
-          <div style={{ flex:1, textAlign:'right' }}>
-            <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text }}>{f?.home_display}</div>
-            {p.home_form_score !== undefined && <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.25)', marginTop:2 }}>Forma {p.home_form_score}%</div>}
-          </div>
-          <div style={{ flexShrink:0, textAlign:'center', minWidth:90 }}>
-            <div style={{ ...T.orb, fontSize:32, fontWeight:900, lineHeight:1, background:`linear-gradient(135deg,${T.cyan},${T.purple})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
-              {p.gol_casa}<span style={{ fontSize:22, opacity:0.4 }}>-</span>{p.gol_trasferta}
-            </div>
-            <div style={{ ...T.sg, fontSize:7, color:'rgba(245,240,232,0.2)', letterSpacing:2, marginTop:2 }}>RISULTATO PREVISTO</div>
-          </div>
-          <div style={{ flex:1 }}>
-            <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text }}>{f?.away_display}</div>
-            {p.away_form_score !== undefined && <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.25)', marginTop:2 }}>Forma {p.away_form_score}%</div>}
-          </div>
-        </div>
+        {/* Squadre + esito principale */}
+        {(() => {
+          // Determina esito principale
+          const probs = [
+            { label: '1', team: f?.home_display, value: p.p_home, color: T.cyan },
+            { label: 'X', team: 'Pareggio',      value: p.p_draw, color: T.gold },
+            { label: '2', team: f?.away_display, value: p.p_away, color: T.purple },
+          ]
+          const top = probs.reduce((best, cur) => cur.value > best.value ? cur : best, probs[0])
+          return (
+            <>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
+                <div style={{ flex:1, textAlign:'right' }}>
+                  <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text }}>{f?.home_display}</div>
+                  {p.home_form_score !== undefined && <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.25)', marginTop:2 }}>Forma {p.home_form_score}%</div>}
+                </div>
+                <div style={{ flexShrink:0, textAlign:'center', minWidth:100, padding:'6px 10px', background:'rgba(255,255,255,0.02)', borderRadius:10 }}>
+                  <div style={{ ...T.orb, fontSize:28, fontWeight:900, lineHeight:1, color: top.color }}>
+                    {top.label}
+                  </div>
+                  <div style={{ ...T.sg, fontSize:11, color:top.color, marginTop:3, fontWeight:600 }}>{top.value.toFixed(0)}%</div>
+                  <div style={{ ...T.sg, fontSize:7, color:'rgba(245,240,232,0.2)', letterSpacing:2, marginTop:3 }}>ESITO PREVISTO</div>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text }}>{f?.away_display}</div>
+                  {p.away_form_score !== undefined && <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.25)', marginTop:2 }}>Forma {p.away_form_score}%</div>}
+                </div>
+              </div>
+
+              {/* Mini barre 1 X 2 */}
+              <div style={{ display:'flex', gap:4, marginBottom:10 }}>
+                {probs.map(x => (
+                  <div key={x.label} style={{ flex: x.value, minWidth:30 }}>
+                    <div style={{ height:4, background:x.color, borderRadius:99, opacity:0.7 }}/>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginTop:3 }}>
+                      <span style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.4)' }}>{x.label}</span>
+                      <span style={{ ...T.sg, fontSize:9, color:x.color, fontWeight:600 }}>{x.value.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )
+        })()}
 
         <XGBar xgH={p.xg_home} xgA={p.xg_away} />
 
@@ -250,30 +277,30 @@ function CardPronostico({ p, isOpen, onToggle }) {
             </div>
           )}
 
-          {/* Risultati esatti a gruppi (stile Eurobet) */}
+          {/* Risultati esatti a gruppi — stile Eurobet */}
           {m?.grouped_scores && (
             <div style={{ marginBottom:14 }}>
-              <div style={T.label}>Risultati esatti a gruppi</div>
-              <div style={{ background:'rgba(255,255,255,0.02)', borderRadius:10, padding:'10px 12px' }}>
+              <div style={T.label}>Ris. esatto a gruppi</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6 }}>
                 {[
-                  { label:'Casa +1 (1-0/2-1/3-2)',   key:'casa_1',           c:T.cyan },
-                  { label:'Casa +2 (2-0/3-1/3-0)',   key:'casa_1-0_2-0_3-0', c:T.cyan },
-                  { label:'Casa +2 (2-1/3-1/4-1)',   key:'casa_2-1_3-1_4-1', c:T.cyan },
-                  { label:'Pari senza gol (0-0)',     key:'x_0',              c:T.gold },
-                  { label:'Pari con gol (1-1/2-2/3-3)',key:'x_1-1_2-2_3-3', c:T.gold },
-                  { label:'Trasferta +1 (0-1/1-2)',  key:'away_1',           c:T.purple },
-                  { label:'Trasferta (0-1/0-2/0-3)', key:'away_0-1_0-2_0-3', c:T.purple },
-                  { label:'Trasferta (1-2/1-3/1-4)', key:'away_1-2_1-3_1-4', c:T.purple },
+                  { label:'1-0 / 2-0 / 3-0',         key:'casa_clean_light', c:T.cyan },
+                  { label:'0-1 / 0-2 / 0-3',         key:'away_clean_light', c:T.purple },
+                  { label:'2-1 / 3-1 / 4-1',         key:'casa_away1',       c:T.cyan },
+                  { label:'1-2 / 1-3 / 1-4',         key:'away_home1',       c:T.purple },
+                  { label:'4-0 / 5-0 / 6-0',         key:'casa_clean_heavy', c:T.cyan },
+                  { label:'0-4 / 0-5 / 0-6',         key:'away_clean_heavy', c:T.purple },
+                  { label:'3-2 / 4-2 / 4-3 / 5-1',   key:'casa_high',        c:T.cyan },
+                  { label:'2-3 / 2-4 / 3-4 / 1-5',   key:'away_high',        c:T.purple },
+                  { label:'Sq.1 altro',              key:'sq1_altro',        c:'rgba(245,240,232,0.5)' },
+                  { label:'Sq.2 altro',              key:'sq2_altro',        c:'rgba(245,240,232,0.5)' },
+                  { label:'Pareggio (X)',            key:'draw_any',         c:T.gold },
                 ].map(row => {
                   const val = m.grouped_scores[row.key]
-                  if (!val) return null
+                  if (val === undefined) return null
                   return (
-                    <div key={row.key} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                      <div style={{ flex:1, height:3, background:'rgba(255,255,255,0.05)', borderRadius:99 }}>
-                        <div style={{ height:'100%', width:`${Math.min(100, val*3)}%`, background:row.c, borderRadius:99, opacity:0.7 }}/>
-                      </div>
-                      <div style={{ ...T.orb, fontSize:11, color:row.c, minWidth:34, textAlign:'right' }}>{val}%</div>
-                      <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.35)', minWidth:160 }}>{row.label}</div>
+                    <div key={row.key} style={{ padding:'8px 10px', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.05)', borderRadius:8, textAlign:'center' }}>
+                      <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.4)', marginBottom:3 }}>{row.label}</div>
+                      <div style={{ ...T.orb, fontSize:14, color:row.c, fontWeight:700 }}>{val}%</div>
                     </div>
                   )
                 })}

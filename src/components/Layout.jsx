@@ -10,17 +10,35 @@ export default function Layout({ session }) {
   const isAdmin = session?.user?.email === ADMIN_EMAIL
 
   const tabs = [
-    { path: '/',                    label: 'SCALATA',     icon: IconScalata },
-    { path: '/pronostici',          label: 'PRONOSTICI',  icon: IconPronostici },
-    { path: '/storico',             label: 'SCALATE',     icon: IconStorico },
-    { path: '/storico-pronostici',  label: 'STATS',       icon: IconStats },
+    { path: '/',                    label: 'SCALATA',    icon: IconScalata },
+    { path: '/pronostici',          label: 'PRONOSTICI', icon: IconPronostici },
     ...(isAdmin ? [{ path: '/admin', label: 'ADMIN', icon: IconAdmin }] : []),
   ]
+
+  const logout = async () => {
+    await supabase.auth.signOut()
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: T.bg, paddingBottom: 80, fontFamily: "'Space Grotesk', sans-serif" }}>
       <style>{GLOBAL_CSS}</style>
-      <Outlet />
+
+      {/* Top bar con logout */}
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 99, display: 'flex', justifyContent: 'flex-end', padding: '12px 16px', pointerEvents: 'none' }}>
+        <button
+          onClick={logout}
+          style={{ pointerEvents: 'all', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 99, padding: '6px 14px', ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', cursor: 'pointer', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'all 0.2s' }}
+          onMouseOver={e => e.currentTarget.style.color = 'rgba(245,240,232,0.7)'}
+          onMouseOut={e => e.currentTarget.style.color = 'rgba(245,240,232,0.3)'}
+        >
+          Esci
+        </button>
+      </div>
+
+      {/* Contenuto pagine — con padding top per evitare overlap con logout */}
+      <div style={{ paddingTop: 48 }}>
+        <Outlet />
+      </div>
 
       {/* Bottom Nav */}
       <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'rgba(8,8,18,0.92)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderTop: '1px solid rgba(255,255,255,0.07)', zIndex: 100 }}>

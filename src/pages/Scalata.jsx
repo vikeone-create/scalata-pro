@@ -332,6 +332,31 @@ export default function Scalata({ session }) {
     else if (esito === 'perso' && (bankrollCorrente <= 0 || stepCorrente >= steps.length)) status = 'fallita'
     const updated = { ...scalataAttiva, steps, stepCorrente, bankrollCorrente, status }
     setScalataAttiva(updated)
+    setSelectedForStep({})
+    setEditedValues({})
+
+    if (status === 'attiva') {
+      // Ricarica partite consigliate per il passo successivo
+      const opz = { tipo: { tipo: scalataAttiva.tipo }, range: rangeQuote(scalataAttiva.quotaMedia) }
+      setPartiteConsigliate([]) // svuota mentre carica
+      fetch(`/api/odds?quotaMin=${opz.range.min}&quotaMax=${opz.range.max}`)
+        .then(r => r.json())
+        .then(odds => {
+          if (!odds?.length) return
+          return fetch('/api/analyze', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ matches: odds, scalataType: scalataAttiva.tipo, capitale: bankrollCorrente, obiettivo: scalataAttiva.obiettivo }),
+          }).then(r => r.json())
+        })
+        .then(aiData => {
+          if (!aiData?.partite_consigliate) return
+          setPartiteConsigliate(aiData.partite_consigliate)
+          // Salva le nuove partite nella scalata
+          const withPartite = { ...updated, partiteConsigliate: aiData.partite_consigliate }
+          setScalataAttiva(withPartite)
+        })
+        .catch(() => {})
+    }
     if (status !== 'attiva') {
       const closed = { ...updated, closedAt: new Date().toISOString() }
       loadData(userId).then(d => {
@@ -533,199 +558,116 @@ export default function Scalata({ session }) {
   // ── SCALATA ATTIVA ──
   if (!scalataAttiva) return null
 
+  const partitaInAttesa = stepCorrente?.matchScelto
+  const stepFatti = scalataAttiva.steps.filter(s => s.done).length
+  const vinti = scalataAttiva.steps.filter(s => s.esito === 'vinto').length
+  const persi = scalataAttiva.steps.filter(s => s.esito === 'perso').length
+  const stepCompletati = scalataAttiva.steps.filter(s => s.done)
+
   return (
     <div style={{ minHeight: '100vh', background: T.bg }}>
       <style>{GLOBAL_CSS}</style>
       <div style={T.page}>
 
-        {/* Back to lista */}
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+        {/* HEADER */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
           <button onClick={chiudiScalata}
-            style={{ background:'none', border:'none', color:'rgba(245,240,232,0.35)', cursor:'pointer', ...T.sg, fontSize:13, padding:0, display:'flex', alignItems:'center', gap:6 }}>
+            style={{ background:'none', border:'none', color:'rgba(245,240,232,0.4)', cursor:'pointer', ...T.sg, fontSize:13, padding:0, display:'flex', alignItems:'center', gap:6 }}>
             ← Tutte le scalate
           </button>
-          <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.2)' }}>
-            {scalateAttive.length > 1 ? `Scalata ${(scalataAperta||0)+1} di ${scalateAttive.length}` : ''}
-          </div>
+          {scalateAttive.length > 1 && (
+            <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)' }}>
+              {(scalataAperta||0)+1} / {scalateAttive.length}
+            </div>
+          )}
         </div>
 
-        {/* Hero bankroll */}
-        <div style={{ ...T.card, padding: '20px', marginBottom: 22, animation: 'fadeUp 0.3s ease' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        {/* ━━━━━ SEZIONE 1: SITUAZIONE ATTUALE ━━━━━ */}
+        <div style={{ marginBottom:8, ...T.sg, fontSize:10, letterSpacing:2, color:'rgba(245,240,232,0.25)', textTransform:'uppercase', fontWeight:700 }}>
+          ◉ Situazione attuale
+        </div>
+        <div style={{ ...T.card, padding:'20px', marginBottom:24 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
             <div>
               <div style={T.label}>Bankroll</div>
-              <div style={{ ...T.orb, fontSize: 36, fontWeight: 900, background: `linear-gradient(135deg, ${T.cyan}, ${T.purple})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', lineHeight: 1 }}>
+              <div style={{ ...T.orb, fontSize:36, fontWeight:900, background:`linear-gradient(135deg, ${T.cyan}, ${T.purple})`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', lineHeight:1 }}>
                 {fmt(scalataAttiva.bankrollCorrente)}
               </div>
-              <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.25)', marginTop: 5 }}>
-                Obiettivo {fmt(scalataAttiva.obiettivo)} · {scalataAttiva.nGiocate} giocate · {scalataAttiva.tipoLabel}
+              <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.35)', marginTop:4 }}>
+                Obiettivo {fmt(scalataAttiva.obiettivo)} · {scalataAttiva.tipoLabel}
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={T.label}>STEP</div>
-              <div style={{ ...T.orb, fontSize: 30, color: T.cyan }}>{stepIdx + 1}<span style={{ fontSize: 14, color: 'rgba(245,240,232,0.2)' }}>/{scalataAttiva.steps.length}</span></div>
+            <div style={{ textAlign:'right' }}>
+              <div style={T.label}>Step</div>
+              <div style={{ ...T.orb, fontSize:28, color:T.cyan }}>
+                {stepIdx+1}<span style={{ fontSize:14, color:'rgba(245,240,232,0.2)' }}>/{scalataAttiva.steps.length}</span>
+              </div>
             </div>
           </div>
+
           {/* Progress bar */}
-          <div style={{ background: 'rgba(255,255,255,0.06)', borderRadius: 99, height: 4 }}>
-            <div style={{ height: '100%', borderRadius: 99, width: `${profitPct}%`, background: `linear-gradient(90deg, ${T.cyan}, ${T.purple})`, transition: 'width 0.5s ease', boxShadow: `0 0 8px ${T.cyan}` }} />
+          <div style={{ height:6, background:'rgba(255,255,255,0.05)', borderRadius:99, overflow:'hidden', marginBottom:6 }}>
+            <div style={{ height:'100%', width:`${profitPct}%`, background:`linear-gradient(90deg, ${T.cyan}, ${T.purple})`, borderRadius:99, transition:'width 0.4s' }}/>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
-            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.18)' }}>{fmt(scalataAttiva.capitale)}</span>
-            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.3)' }}>{Math.round(profitPct)}%</span>
-            <span style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.18)' }}>{fmt(scalataAttiva.obiettivo)}</span>
+          <div style={{ display:'flex', justifyContent:'space-between', ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)' }}>
+            <span>{fmt(scalataAttiva.capitale)}</span>
+            <span>{profitPct.toFixed(0)}%</span>
+            <span>{fmt(scalataAttiva.obiettivo)}</span>
           </div>
+
+          {/* Stats mini */}
+          {stepFatti > 0 && (
+            <div style={{ display:'flex', gap:16, marginTop:14, paddingTop:14, borderTop:'1px solid rgba(255,255,255,0.05)' }}>
+              <div>
+                <div style={{ ...T.orb, fontSize:14, color:T.green }}>{vinti}</div>
+                <div style={{ ...T.label, marginBottom:0, marginTop:2 }}>Vinti</div>
+              </div>
+              {persi > 0 && (
+                <div>
+                  <div style={{ ...T.orb, fontSize:14, color:T.red }}>{persi}</div>
+                  <div style={{ ...T.label, marginBottom:0, marginTop:2 }}>Persi</div>
+                </div>
+              )}
+              <div>
+                <div style={{ ...T.orb, fontSize:14, color:'rgba(245,240,232,0.5)' }}>{scalataAttiva.steps.length - stepFatti}</div>
+                <div style={{ ...T.label, marginBottom:0, marginTop:2 }}>Rimanenti</div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Step corrente */}
+        {/* ━━━━━ SEZIONE 2: PROSSIMA GIOCATA ━━━━━ */}
         {stepCorrente && !stepCorrente.done && (
-          <div style={{ marginBottom: 22 }}>
-            <div style={T.label}>Prossima giocata</div>
-            <div style={{ ...T.cardGlow(T.cyan), padding: '16px 18px', marginBottom: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                <div style={{ ...T.orb, fontSize: 28, color: T.text }}>{fmt(stepCorrente.importo)}</div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)' }}>Vincita potenziale</div>
-                  <div style={{ ...T.orb, fontSize: 18, color: T.green }}>{fmt(stepCorrente.vincita)}</div>
+          <>
+            <div style={{ marginBottom:8, ...T.sg, fontSize:10, letterSpacing:2, color:'rgba(245,240,232,0.25)', textTransform:'uppercase', fontWeight:700 }}>
+              ▸ Prossima giocata
+            </div>
+            <div style={{ ...T.card, padding:'18px', marginBottom:24, border:`1px solid ${T.cyan}20` }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <div>
+                  <div style={T.label}>Importo</div>
+                  <div style={{ ...T.orb, fontSize:28, color:T.text }}>{fmt(stepCorrente.importo)}</div>
                 </div>
-              </div>
-              <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)' }}>
-                Quota {stepCorrente.quota} · ▲ {fmt(stepCorrente.bankrollSeVince)} · ▼ {fmt(stepCorrente.bankrollSePerde)}
+                <div style={{ textAlign:'center' }}>
+                  <div style={T.label}>Quota</div>
+                  <div style={{ ...T.orb, fontSize:20, color:'rgba(245,240,232,0.6)' }}>{stepCorrente.quota}</div>
+                </div>
+                <div style={{ textAlign:'right' }}>
+                  <div style={T.label}>Vincita</div>
+                  <div style={{ ...T.orb, fontSize:22, color:T.green }}>{fmt(stepCorrente.vincita)}</div>
+                </div>
               </div>
             </div>
+          </>
+        )}
 
-            {/* Partite AI */}
-            {partiteConsigliate.length > 0 && (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={T.label}>Scegli una partita da giocare</div>
-                  <div style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.2)' }}>1 su {partiteConsigliate.length}</div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-                  {partiteConsigliate.map((p, i) => {
-                    const isSel = selectedForStep[stepIdx]?.index === p.index
-                    const vc = { OTTIMA: T.green, BUONA: T.cyan, ACCETTABILE: T.gold }[p.verdetto] || 'rgba(245,240,232,0.3)'
-                    return (
-                      <div key={i} onClick={() => {
-                        setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSel ? null : p }))
-                        if (!isSel) setEditedValues(prev => ({ ...prev, [stepIdx]: { quota: p.match?.quota, importo: stepCorrente?.importo } }))
-                      }}
-                        style={{ padding: '14px 16px', background: isSel ? `${vc}06` : 'rgba(255,255,255,0.02)', border: `1px solid ${isSel ? vc + '45' : 'rgba(255,255,255,0.07)'}`, borderRadius: 14, cursor: 'pointer', transition: 'all 0.15s', boxShadow: isSel ? `0 0 20px ${vc}10` : 'none' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                          <div style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
-                            <div style={{ ...T.sg, fontSize: 13, fontWeight: 600, color: T.text }}>
-                              {p.match?.home} <span style={{ color: 'rgba(245,240,232,0.25)' }}>vs</span> {p.match?.away}
-                            </div>
-                            <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 2 }}>
-                              <span style={{ color: 'rgba(245,240,232,0.5)' }}>{p.match?.esito}</span> · {p.match?.commence ? fmtDate(p.match.commence) : ''}
-                              <span style={{ color: 'rgba(245,240,232,0.15)', marginLeft: 4 }}>· {p.match?.bookmaker}</span>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
-                            <div style={{ ...T.orb, fontSize: 20, color: vc }}>{p.match?.quota}</div>
-                            <div style={{ ...T.sg, fontSize: 8, padding: '2px 8px', borderRadius: 99, background: `${vc}18`, border: `1px solid ${vc}40`, color: vc, fontWeight: 700, letterSpacing: 1 }}>{p.verdetto}</div>
-                          </div>
-                        </div>
-                        {(p.forma_casa || p.forma_trasferta) && (
-                          <div style={{ display: 'flex', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                            {[{ label: p.match?.home?.split(' ')[0], forma: p.forma_casa }, { label: p.match?.away?.split(' ')[0], forma: p.forma_trasferta }].map(({ label, forma }) => forma && (
-                              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.3)' }}>{label}</span>
-                                <div style={{ display: 'flex', gap: 2 }}>
-                                  {forma.split('-').map((r, j) => (
-                                    <div key={j} style={{ width: 16, height: 16, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 800, background: r === 'V' ? 'rgba(0,255,150,0.15)' : r === 'P' ? 'rgba(255,68,68,0.15)' : 'rgba(201,168,76,0.15)', color: r === 'V' ? T.green : r === 'P' ? T.red : T.gold }}>{r}</div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.5)', lineHeight: 1.5 }}>
-                          <span style={{ color: T.green }}>✓</span> {p.motivo_principale}
-                        </div>
-                        {p.rischio_principale && (
-                          <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.3)', marginTop: 3 }}>
-                            <span style={{ color: T.red }}>⚠</span> {p.rischio_principale}
-                          </div>
-                        )}
-                        {p.notizie && (
-                          <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.22)', marginTop: 4 }}>📰 {p.notizie}</div>
-                        )}
-                        {p.value_bet && (
-                          <div style={{ marginTop: 8, padding: '6px 10px', background: `${T.green}08`, border: `1px solid ${T.green}20`, borderRadius: 8 }}>
-                            <div style={{ ...T.sg, fontSize: 10, color: T.green, fontWeight: 600 }}>✨ Value bet</div>
-                            <div style={{ ...T.sg, fontSize: 9, color: `${T.green}70`, marginTop: 1, lineHeight: 1.5 }}>
-                              La quota offre più valore del rischio reale stimato dal modello
-                            </div>
-                          </div>
-                        )}
-                        {isSel && (
-                          <div style={{ marginTop: 12, padding: '12px', background: 'rgba(0,0,0,0.25)', borderRadius: 10, borderTop: `1px solid ${vc}25` }}
-                            onClick={e => e.stopPropagation()}>
-                            <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.35)', marginBottom: 8 }}>
-                              ✏️ Modifica se giochi su bookmaker diverso
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                              <div>
-                                <div style={{ ...T.label, marginBottom: 4 }}>Importo (€)</div>
-                                <input type="number"
-                                  value={editedValues[stepIdx]?.importo ?? stepCorrente?.importo}
-                                  onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], importo: e.target.value } }))}
-                                  style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px' }} />
-                              </div>
-                              <div>
-                                <div style={{ ...T.label, marginBottom: 4 }}>Quota</div>
-                                <input type="number" step="0.01"
-                                  value={editedValues[stepIdx]?.quota ?? p.match?.quota}
-                                  onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], quota: e.target.value } }))}
-                                  style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px' }} />
-                              </div>
-                            </div>
-                            <div style={{ ...T.sg, fontSize: 11, color: T.cyan, marginTop: 8, textAlign: 'center' }}>
-                              Vincita potenziale: <span style={{ ...T.orb, color: T.green }}>
-                                {fmt((Number(editedValues[stepIdx]?.importo || stepCorrente?.importo) * Number(editedValues[stepIdx]?.quota || p.match?.quota)))}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-
-            {/* Vinto / Perso */}
-            {selectedForStep[stepIdx] ? (
-              <div>
-                {/* Bottone "Piazza la giocata" — salva la scelta senza registrare l'esito */}
-                <button onClick={() => {
-                  const match = selectedForStep[stepIdx]?.match
-                  const edited = editedValues[stepIdx] || {}
-                  const quotaUsata = Number(edited.quota) || match?.quota
-                  const importoUsato = Number(edited.importo) || stepCorrente?.importo
-                  // Salva matchScelto nello step senza marcarlo done
-                  const steps = scalataAttiva.steps.map((s, i) => i === stepIdx ? {
-                    ...s,
-                    matchScelto: { ...match, quota: quotaUsata, importo: importoUsato },
-                  } : s)
-                  const updated = { ...scalataAttiva, steps }
-                  setScalataAttiva(updated)
-                  persist({ scalata_attiva: updated })
-                  setSelectedForStep({})
-                }}
-                  style={{ width:'100%', padding:'14px', background:`${T.cyan}0a`, border:`1px solid ${T.cyan}30`, borderRadius:14, color:T.cyan, ...T.sg, fontSize:14, fontWeight:700, cursor:'pointer', marginBottom:8 }}>
-                  ⏳ Piazza la giocata — decidi l'esito dopo
-                </button>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <button onClick={() => registraEsito(stepIdx, 'vinto', selectedForStep[stepIdx]?.match)}
-                    style={{ padding: '14px', background: `${T.green}0a`, border: `1px solid ${T.green}30`, borderRadius: 14, color: T.green, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: `0 0 16px ${T.green}10` }}>✓ Già vinto</button>
-                  <button onClick={() => registraEsito(stepIdx, 'perso', selectedForStep[stepIdx]?.match)}
-                    style={{ padding: '14px', background: `${T.red}0a`, border: `1px solid ${T.red}30`, borderRadius: 14, color: T.red, ...T.sg, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✗ Già perso</button>
-                </div>
-              </div>
-            ) : stepCorrente?.matchScelto ? (
-              /* Partita piazzata — auto-import o manuale */
+        {/* ━━━━━ SEZIONE 3: PARTITA IN ATTESA / PARTITE CONSIGLIATE ━━━━━ */}
+        {partitaInAttesa ? (
+          <>
+            <div style={{ marginBottom:8, ...T.sg, fontSize:10, letterSpacing:2, color:`${T.gold}90`, textTransform:'uppercase', fontWeight:700 }}>
+              ⏳ Giocata in attesa
+            </div>
+            <div style={{ marginBottom:24 }}>
               <AutoImportEsito
                 step={stepCorrente}
                 stepIdx={stepIdx}
@@ -734,36 +676,143 @@ export default function Scalata({ session }) {
                 setScalataAttiva={setScalataAttiva}
                 persist={persist}
               />
-            ) : (
-              <div style={{ padding: '14px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 14, textAlign: 'center', ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.2)' }}>
-                ↑ Seleziona una partita per registrare l'esito
+            </div>
+          </>
+        ) : stepCorrente && !stepCorrente.done && (
+          <>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+              <div style={{ ...T.sg, fontSize:10, letterSpacing:2, color:'rgba(245,240,232,0.25)', textTransform:'uppercase', fontWeight:700 }}>
+                ⚡ Partite consigliate
+              </div>
+              {partiteConsigliate.length > 0 && (
+                <div style={{ ...T.sg, fontSize:9, color:'rgba(245,240,232,0.2)' }}>
+                  {partiteConsigliate.length} opzioni
+                </div>
+              )}
+            </div>
+
+            {partiteConsigliate.length === 0 && (
+              <div style={{ padding:'32px 20px', textAlign:'center', background:'rgba(255,255,255,0.02)', borderRadius:12, marginBottom:16 }}>
+                <div style={{ width:28, height:28, borderRadius:'50%', border:`2px solid ${T.cyan}18`, borderTop:`2px solid ${T.cyan}`, animation:'spin 1s linear infinite', margin:'0 auto 12px' }}/>
+                <div style={{ ...T.sg, fontSize:12, color:'rgba(245,240,232,0.35)' }}>Sto analizzando le partite di oggi...</div>
               </div>
             )}
-          </div>
-        )}
 
-        {/* Step completati */}
-        {scalataAttiva.steps.filter(s => s.done).length > 0 && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={T.label}>Step completati</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {scalataAttiva.steps.filter(s => s.done).map((step, i) => (
-                <div key={i} style={{ padding: '12px 16px', background: step.esito === 'vinto' ? `${T.green}05` : `${T.red}05`, border: `1px solid ${step.esito === 'vinto' ? T.green + '20' : T.red + '20'}`, borderRadius: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ ...T.sg, fontSize: 13, color: 'rgba(245,240,232,0.65)' }}>
-                      <span style={{ color: step.esito === 'vinto' ? T.green : T.red, marginRight: 8 }}>{step.esito === 'vinto' ? '✓' : '✗'}</span>
-                      Step {step.step} · {fmt(step.importo)}
+            {partiteConsigliate.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:10, marginBottom:16 }}>
+                {partiteConsigliate.map((p, i) => {
+                  const isSel = selectedForStep[stepIdx]?.index === p.index
+                  const vc = { OTTIMA: T.green, BUONA: T.cyan, ACCETTABILE: T.gold }[p.verdetto] || 'rgba(245,240,232,0.3)'
+                  return (
+                    <div key={i} onClick={() => {
+                      setSelectedForStep(prev => ({ ...prev, [stepIdx]: isSel ? null : p }))
+                      if (!isSel) setEditedValues(prev => ({ ...prev, [stepIdx]: { quota: p.match?.quota, importo: stepCorrente?.importo } }))
+                    }}
+                      style={{ padding:'14px 16px', background:isSel ? `${vc}06` : 'rgba(255,255,255,0.02)', border:`1px solid ${isSel ? vc+'45' : 'rgba(255,255,255,0.07)'}`, borderRadius:14, cursor:'pointer', transition:'all 0.15s', boxShadow:isSel ? `0 0 20px ${vc}10` : 'none' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:8 }}>
+                        <div style={{ flex:1, minWidth:0, marginRight:10 }}>
+                          <div style={{ ...T.sg, fontSize:13, fontWeight:600, color:T.text }}>
+                            {p.match?.home} <span style={{ color:'rgba(245,240,232,0.25)' }}>vs</span> {p.match?.away}
+                          </div>
+                          <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)', marginTop:2 }}>
+                            <span style={{ color:'rgba(245,240,232,0.5)' }}>{p.match?.esito}</span> · {p.match?.commence ? fmtDate(p.match.commence) : ''}
+                            <span style={{ color:'rgba(245,240,232,0.15)', marginLeft:4 }}>· {p.match?.bookmaker}</span>
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4, flexShrink:0 }}>
+                          <div style={{ ...T.orb, fontSize:20, color:vc }}>{p.match?.quota}</div>
+                          <div style={{ ...T.sg, fontSize:8, padding:'2px 8px', borderRadius:99, background:`${vc}18`, border:`1px solid ${vc}40`, color:vc, fontWeight:700, letterSpacing:1 }}>{p.verdetto}</div>
+                        </div>
+                      </div>
+                      <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.5)', lineHeight:1.5 }}>
+                        <span style={{ color:T.green }}>✓</span> {p.motivo_principale}
+                      </div>
+                      {p.rischio_principale && (
+                        <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.3)', marginTop:3 }}>
+                          <span style={{ color:T.red }}>⚠</span> {p.rischio_principale}
+                        </div>
+                      )}
+                      {isSel && (
+                        <div style={{ marginTop:12, padding:'12px', background:'rgba(0,0,0,0.25)', borderRadius:10, borderTop:`1px solid ${vc}25` }}
+                          onClick={e => e.stopPropagation()}>
+                          <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.35)', marginBottom:8 }}>
+                            ✏️ Modifica se giochi su bookmaker diverso
+                          </div>
+                          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+                            <div>
+                              <div style={{ ...T.label, marginBottom:4 }}>Importo (€)</div>
+                              <input type="number"
+                                value={editedValues[stepIdx]?.importo ?? stepCorrente?.importo}
+                                onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], importo: e.target.value } }))}
+                                style={{ ...T.input, ...T.orb, fontSize:16, padding:'8px 12px' }} />
+                            </div>
+                            <div>
+                              <div style={{ ...T.label, marginBottom:4 }}>Quota</div>
+                              <input type="number" step="0.01"
+                                value={editedValues[stepIdx]?.quota ?? p.match?.quota}
+                                onChange={e => setEditedValues(prev => ({ ...prev, [stepIdx]: { ...prev[stepIdx], quota: e.target.value } }))}
+                                style={{ ...T.input, ...T.orb, fontSize:16, padding:'8px 12px' }} />
+                            </div>
+                          </div>
+                          <button onClick={() => {
+                            const match = selectedForStep[stepIdx]?.match
+                            const edited = editedValues[stepIdx] || {}
+                            const quotaUsata = Number(edited.quota) || match?.quota
+                            const importoUsato = Number(edited.importo) || stepCorrente?.importo
+                            const steps = scalataAttiva.steps.map((s, idx) => idx === stepIdx ? {
+                              ...s, matchScelto: { ...match, quota: quotaUsata, importo: importoUsato },
+                            } : s)
+                            setScalataAttiva({ ...scalataAttiva, steps })
+                            setSelectedForStep({})
+                          }}
+                            style={{ width:'100%', padding:'12px', background:`${T.cyan}18`, border:`1px solid ${T.cyan}40`, borderRadius:10, color:T.cyan, ...T.sg, fontSize:13, fontWeight:700, cursor:'pointer' }}>
+                            ⏳ Piazza questa giocata
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    {step.matchUsato && <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.25)', marginTop: 2 }}>{step.matchUsato.home} vs {step.matchUsato.away}</div>}
-                  </div>
-                  <div style={{ ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.25)' }}>{step.timestamp ? new Date(step.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
         )}
 
-        <button onClick={abbandonaScalata} style={{ width: '100%', padding: '12px', background: 'transparent', border: `1px solid ${T.red}20`, borderRadius: 12, color: `${T.red}50`, ...T.sg, fontSize: 11, cursor: 'pointer', letterSpacing: 2 }}>
+        {/* ━━━━━ SEZIONE 4: STEP PASSATI (collapsed) ━━━━━ */}
+        {stepCompletati.length > 0 && (
+          <details style={{ marginBottom:20 }}>
+            <summary style={{ cursor:'pointer', padding:'10px 14px', background:'rgba(255,255,255,0.02)', borderRadius:10, ...T.sg, fontSize:11, color:'rgba(245,240,232,0.4)', letterSpacing:1, listStyle:'none' }}>
+              📋 STEP PASSATI ({stepCompletati.length})
+            </summary>
+            <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:6 }}>
+              {stepCompletati.map((step, j) => {
+                const isV = step.esito === 'vinto'
+                return (
+                  <div key={j} style={{ padding:'10px 14px', background:isV ? `${T.green}05` : `${T.red}05`, border:`1px solid ${isV ? T.green+'20' : T.red+'20'}`, borderRadius:10 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div style={{ ...T.sg, fontSize:12, color:'rgba(245,240,232,0.7)' }}>
+                        <span style={{ color:isV ? T.green : T.red, marginRight:8 }}>{isV ? '✓' : '✗'}</span>
+                        Step {step.step} · <span style={T.orb}>{fmt(step.importo)}</span> × {step.quota}
+                      </div>
+                      <div style={{ ...T.orb, fontSize:12, color:isV ? T.green : T.red }}>
+                        {isV ? '+' : '-'}{fmt(isV ? step.vincita - step.importo : step.importo)}
+                      </div>
+                    </div>
+                    {step.matchUsato && (
+                      <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.3)', marginTop:4 }}>
+                        {step.matchUsato.home} vs {step.matchUsato.away}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </details>
+        )}
+
+        {/* BOTTONE ABBANDONA */}
+        <button onClick={abbandonaScalata}
+          style={{ width:'100%', padding:'10px', background:'transparent', border:`1px solid ${T.red}15`, borderRadius:10, color:`${T.red}60`, ...T.sg, fontSize:10, cursor:'pointer', letterSpacing:2, marginTop:20 }}>
           ABBANDONA SCALATA
         </button>
       </div>

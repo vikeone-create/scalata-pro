@@ -44,8 +44,22 @@ async function loadData(userId) {
   const { data } = await supabase.from('user_data').select('*').eq('user_id', userId).single()
   return data
 }
-async function saveData(userId, patch) {
-  await supabase.from('user_data').upsert({ user_id: userId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+async function saveData(userId, patch, attempt = 0) {
+  try {
+    const { error } = await supabase.from('user_data').upsert(
+      { user_id: userId, ...patch, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    )
+    if (error) throw error
+    return { ok: true }
+  } catch (e) {
+    if (attempt < 2) {
+      // Retry 2 volte con backoff
+      await new Promise(r => setTimeout(r, (attempt + 1) * 800))
+      return saveData(userId, patch, attempt + 1)
+    }
+    return { ok: false, error: e.message || 'Errore sconosciuto' }
+  }
 }
 
 function Spinner({ msg }) {
@@ -207,9 +221,38 @@ export default function Scalata({ session }) {
   const [error, setError]         = useState(null)
   const [selectedForStep, setSelectedForStep] = useState({})
   const [editedValues, setEditedValues] = useState({})
+  const [stepGiaFatti, setStepGiaFatti] = useState(0) // per importare scalate in corso
+  const [saveStatus, setSaveStatus] = useState('idle')
 
   // Scalata correntemente aperta
   const scalataAttiva = scalataAperta !== null ? scalateAttive[scalataAperta] : null
+
+  // Funzione di ricarica dati dal DB
+  const reloadFromDB = async () => {
+    if (!userId) return
+    const d = await loadData(userId)
+    if (d?.scalate_attive?.length) {
+      setScalateAttive(d.scalate_attive)
+    } else if (d?.scalata_attiva) {
+      setScalateAttive([d.scalata_attiva])
+    } else {
+      setScalateAttive([])
+    }
+  }
+
+  // Auto-reload quando l'utente torna sull'app (es. cambia da telefono a pc)
+  useEffect(() => {
+    if (!userId) return
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') reloadFromDB()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', onVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', onVisibility)
+    }
+  }, [userId])
 
   useEffect(() => {
     if (!userId) return
@@ -229,7 +272,18 @@ export default function Scalata({ session }) {
     })
   }, [userId])
 
-  const persistAttive = (nuove) => saveData(userId, { scalate_attive: nuove })
+  const persistAttive = async (nuove) => {
+    setSaveStatus('saving')
+    const result = await saveData(userId, { scalate_attive: nuove })
+    if (result.ok) {
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } else {
+      setSaveStatus('error')
+      // Mantieni "error" fino al prossimo tentativo
+    }
+    return result
+  }
   const persist = patch => {
     // compat: se patch ha scalata_attiva, aggiorna quella aperta nell'array
     if (patch.scalata_attiva && scalataAperta !== null) {
@@ -271,13 +325,32 @@ export default function Scalata({ session }) {
         createdAt: new Date().toISOString(), status: 'attiva',
         partiteConsigliate: aiData.partite_consigliate || [],
       }
+
+      // Se ho indicato step già fatti, marcali come vinti
+      if (stepGiaFatti > 0) {
+        const now = new Date().toISOString()
+        for (let i = 0; i < stepGiaFatti && i < scalata.steps.length; i++) {
+          scalata.steps[i] = {
+            ...scalata.steps[i],
+            done: true,
+            esito: 'vinto',
+            timestamp: now,
+            quotaEffettiva: scalata.steps[i].quota,
+            importoEffettivo: scalata.steps[i].importo,
+            vincitaEffettiva: scalata.steps[i].vincita,
+          }
+        }
+        scalata.stepCorrente = stepGiaFatti
+        scalata.bankrollCorrente = scalata.steps[stepGiaFatti - 1].bankrollSeVince
+      }
+
       const nuove = [...scalateAttive, scalata]
       setScalateAttive(nuove)
       setScalataAperta(nuove.length - 1)
       setPartiteConsigliate(aiData.partite_consigliate || [])
       persistAttive(nuove)
       // Reset form
-      setCapitale(''); setObiettivo(''); setNGiocate(null)
+      setCapitale(''); setObiettivo(''); setNGiocate(null); setStepGiaFatti(0)
       setFase('scalata')
     } catch(e) { setError(e.message); setFase('setup') }
     setLoadingMsg('')
@@ -392,9 +465,23 @@ export default function Scalata({ session }) {
     <div style={{ minHeight:'100vh', background:T.bg }}>
       <style>{GLOBAL_CSS}</style>
       <div style={T.page}>
-        <div style={{ marginBottom:20 }}>
-          <div style={{ ...T.orb, fontSize:26, fontWeight:700, letterSpacing:2, color:T.text }}>SCALATA</div>
-          <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.25)', marginTop:4 }}>Gestisci le tue scalate attive</div>
+        <div style={{ marginBottom:20, display:'flex', justifyContent:'space-between', alignItems:'flex-end' }}>
+          <div>
+            <div style={{ ...T.orb, fontSize:26, fontWeight:700, letterSpacing:2, color:T.text }}>SCALATA</div>
+            <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.25)', marginTop:4 }}>Gestisci le tue scalate attive</div>
+          </div>
+          {saveStatus === 'saving' && (
+            <div style={{ display:'flex', alignItems:'center', gap:5, ...T.sg, fontSize:10, color:'rgba(245,240,232,0.4)' }}>
+              <div style={{ width:10, height:10, borderRadius:'50%', border:`1.5px solid ${T.cyan}30`, borderTop:`1.5px solid ${T.cyan}`, animation:'spin 0.8s linear infinite' }}/>
+              Salvo...
+            </div>
+          )}
+          {saveStatus === 'error' && (
+            <button onClick={() => persistAttive(scalateAttive)}
+              style={{ ...T.sg, fontSize:10, color:T.red, background:`${T.red}10`, border:`1px solid ${T.red}30`, borderRadius:8, padding:'3px 8px', cursor:'pointer' }}>
+              ⚠ Riprova
+            </button>
+          )}
         </div>
 
         {/* Scalate in corso */}
@@ -544,6 +631,49 @@ export default function Scalata({ session }) {
           <div style={{ padding: '12px 16px', background: `${T.red}08`, border: `1px solid ${T.red}30`, borderRadius: 12, ...T.sg, fontSize: 13, color: T.red, marginBottom: 16, lineHeight: 1.6 }}>{error}</div>
         )}
 
+        {/* Importa scalata in corso */}
+        {isValido && (
+          <details style={{ marginBottom: 16 }}>
+            <summary style={{ cursor:'pointer', ...T.sg, fontSize:11, color:'rgba(245,240,232,0.35)', padding:'8px 0', listStyle:'none', display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ color:'rgba(245,240,232,0.3)' }}>▸</span> Hai già iniziato questa scalata? (opzionale)
+            </summary>
+            <div style={{ marginTop:8, padding:'12px 14px', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.05)', borderRadius:10 }}>
+              <div style={{ ...T.sg, fontSize:11, color:'rgba(245,240,232,0.45)', marginBottom:10, lineHeight:1.5 }}>
+                Se hai già giocato qualche step, indica quanti <strong>step vincenti</strong> hai fatto. Verranno marcati come già vinti e il bankroll si aggiorna automaticamente.
+              </div>
+              <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                {Array.from({length: Math.min(nGiocate - 1, 15) + 1}, (_, i) => i).map(n => (
+                  <button key={n} onClick={() => setStepGiaFatti(n)}
+                    style={{
+                      padding:'8px 14px', borderRadius:8,
+                      background: stepGiaFatti === n ? `${T.cyan}20` : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${stepGiaFatti === n ? T.cyan + '60' : 'rgba(255,255,255,0.08)'}`,
+                      color: stepGiaFatti === n ? T.cyan : 'rgba(245,240,232,0.5)',
+                      ...T.orb, fontSize:14, cursor:'pointer', fontWeight:600,
+                    }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+              {stepGiaFatti > 0 && (
+                <div style={{ marginTop:10, padding:'8px 12px', background:`${T.green}08`, border:`1px solid ${T.green}20`, borderRadius:8, ...T.sg, fontSize:11, color:T.green }}>
+                  ✓ {stepGiaFatti} step già vinti — il bankroll partirà da ≈ {(() => {
+                    const qm = +opzioni.find(o => o.n === nGiocate).quota.toFixed(2)
+                    const preSteps = calcScalata(cap, obj, qm)
+                    let br = cap
+                    for (let i = 0; i < stepGiaFatti && i < preSteps.length; i++) {
+                      br = preSteps[i].bankrollSeVince
+                      // ricalcola con bankroll aggiornato
+                      const rest = preSteps.slice(i+1)
+                    }
+                    return fmt(preSteps[stepGiaFatti-1]?.bankrollSeVince || cap)
+                  })()}
+                </div>
+              )}
+            </div>
+          </details>
+        )}
+
         <button onClick={avvia} disabled={!isValido} style={{ ...T.btn, opacity: isValido ? 1 : 0.3, cursor: isValido ? 'pointer' : 'not-allowed' }}>
           ANALIZZA E AVVIA →
         </button>
@@ -575,11 +705,29 @@ export default function Scalata({ session }) {
             style={{ background:'none', border:'none', color:'rgba(245,240,232,0.4)', cursor:'pointer', ...T.sg, fontSize:13, padding:0, display:'flex', alignItems:'center', gap:6 }}>
             ← Tutte le scalate
           </button>
-          {scalateAttive.length > 1 && (
-            <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)' }}>
-              {(scalataAperta||0)+1} / {scalateAttive.length}
-            </div>
-          )}
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            {/* Indicatore salvataggio */}
+            {saveStatus === 'saving' && (
+              <div style={{ display:'flex', alignItems:'center', gap:5, ...T.sg, fontSize:10, color:'rgba(245,240,232,0.4)' }}>
+                <div style={{ width:10, height:10, borderRadius:'50%', border:`1.5px solid ${T.cyan}30`, borderTop:`1.5px solid ${T.cyan}`, animation:'spin 0.8s linear infinite' }}/>
+                Salvo...
+              </div>
+            )}
+            {saveStatus === 'saved' && (
+              <div style={{ ...T.sg, fontSize:10, color:T.green }}>✓ Salvato</div>
+            )}
+            {saveStatus === 'error' && (
+              <button onClick={() => persistAttive(scalateAttive)}
+                style={{ ...T.sg, fontSize:10, color:T.red, background:`${T.red}10`, border:`1px solid ${T.red}30`, borderRadius:8, padding:'3px 8px', cursor:'pointer' }}>
+                ⚠ Errore — riprova
+              </button>
+            )}
+            {scalateAttive.length > 1 && (
+              <div style={{ ...T.sg, fontSize:10, color:'rgba(245,240,232,0.25)' }}>
+                {(scalataAperta||0)+1} / {scalateAttive.length}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ━━━━━ SEZIONE 1: SITUAZIONE ATTUALE ━━━━━ */}

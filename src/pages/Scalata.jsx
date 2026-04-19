@@ -392,8 +392,9 @@ function SchermataSetup({ onBack, onCrea }) {
   const [importMode, setImportMode] = useState(false)
 
   const cap = Number(capitale), obj = Number(obiettivo)
-  const valido = cap >= 1 && obj > cap && nGiocate !== null
-  const opzioni = valido ? N_GIOCATE.map(n => {
+  const basicValid = cap >= 1 && obj > cap
+  const valido = basicValid && nGiocate !== null
+  const opzioni = basicValid ? N_GIOCATE.map(n => {
     const quota = calcQuotaMedia(cap, obj, n)
     return { n, quota, tipo: classificaTipo(quota), range: rangeQuote(quota) }
   }) : []
@@ -457,7 +458,7 @@ function SchermataSetup({ onBack, onCrea }) {
         </div>
 
         {/* Numero giocate — cards compatte */}
-        {valido && (
+        {basicValid && (
           <div style={{ marginBottom: 18 }}>
             <div style={T.label}>Numero di giocate</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 6 }}>
@@ -488,7 +489,7 @@ function SchermataSetup({ onBack, onCrea }) {
         )}
 
         {/* Info leghe */}
-        {valido && (
+        {basicValid && (
           <div style={{ marginBottom: 14, padding: '10px 12px', background: `${T.cyan}08`, border: `1px solid ${T.cyan}20`, borderRadius: 10, ...T.sg, fontSize: 11, color: `${T.cyan}b0` }}>
             🌍 Tutte le leghe principali (CL, EL, Serie A, Premier, LaLiga, Bundesliga, Ligue 1)
           </div>

@@ -608,21 +608,35 @@ function SchermataAttiva({ scalata, tutte, apertaIdx, saveStatus, onBack, onUpda
     refreshPartite(bankrollCorrente)
   }
 
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState(null)
+
   const refreshPartite = async (bankroll) => {
+    setRefreshing(true)
+    setRefreshError(null)
     try {
       const range = rangeQuote(scalata.quotaMedia)
       const res = await fetch(`/api/odds?quotaMin=${range.min}&quotaMax=${range.max}`)
+      if (!res.ok) throw new Error(`Odds API errore ${res.status}`)
       const odds = await res.json()
-      if (!odds?.length) return
+      if (!odds?.length) {
+        throw new Error('Nessuna partita disponibile in questo range di quote oggi')
+      }
       const aiRes = await fetch('/api/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: odds, scalataType: scalata.tipo, capitale: bankroll, obiettivo: scalata.obiettivo }),
+        body: JSON.stringify({ matches: odds, scalataType: scalata.tipo, capitale: bankroll || scalata.bankrollCorrente, obiettivo: scalata.obiettivo }),
       })
+      if (!aiRes.ok) throw new Error(`Analyze errore ${aiRes.status}`)
       const aiData = await aiRes.json()
-      if (aiData?.partite_consigliate) {
+      if (aiData?.partite_consigliate?.length) {
         onUpdate({ partiteConsigliate: aiData.partite_consigliate })
+      } else {
+        throw new Error('AI non ha restituito partite consigliate')
       }
-    } catch (e) {}
+    } catch (e) {
+      setRefreshError(e.message || 'Errore sconosciuto')
+    }
+    setRefreshing(false)
   }
 
   const piazzaPartita = (match, importo, quota) => {
@@ -635,6 +649,85 @@ function SchermataAttiva({ scalata, tutte, apertaIdx, saveStatus, onBack, onUpda
   const annullaMatch = () => {
     const steps = scalata.steps.map((s, i) => i === stepIdx ? { ...s, matchScelto: null } : s)
     onUpdate({ steps })
+  }
+
+  // ─── EDITOR STEP PASSATI ──────────────────────────────────────────────────
+  // Modifica uno step già fatto (vinto/perso/dettagli)
+  const modificaStep = (idx, patch) => {
+    const steps = scalata.steps.map((s, i) => i === idx ? { ...s, ...patch } : s)
+    // Ricalcola bankroll progressivamente da capo
+    let br = scalata.capitale
+    let stepCorr = 0
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]
+      if (s.done) {
+        const imp = s.importoEffettivo ?? s.importo
+        const qt = s.quotaEffettiva ?? s.quota
+        const vinc = +(imp * qt).toFixed(2)
+        s.bankrollSeVince = +(br - imp + vinc).toFixed(2)
+        s.bankrollSePerde = +(br - imp).toFixed(2)
+        s.vincitaEffettiva = vinc
+        if (s.esito === 'vinto') br = s.bankrollSeVince
+        else if (s.esito === 'perso') br = s.bankrollSePerde
+        stepCorr = i + 1
+      }
+    }
+    onUpdate({ steps, bankrollCorrente: br, stepCorrente: stepCorr })
+  }
+
+  // Reset step (lo rimette pendente)
+  const resetStep = (idx) => {
+    if (!window.confirm('Annullare questo step? Lo step tornerà pendente.')) return
+    const steps = scalata.steps.map((s, i) => i === idx ? {
+      ...s, done: false, esito: null, matchUsato: null, matchScelto: null,
+      timestamp: null, quotaEffettiva: undefined, importoEffettivo: undefined, vincitaEffettiva: undefined,
+    } : s)
+    // Ricalcola
+    let br = scalata.capitale
+    let stepCorr = 0
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]
+      if (s.done) {
+        const imp = s.importoEffettivo ?? s.importo
+        const qt = s.quotaEffettiva ?? s.quota
+        if (s.esito === 'vinto') br = +(br - imp + imp * qt).toFixed(2)
+        else if (s.esito === 'perso') br = +(br - imp).toFixed(2)
+        stepCorr = i + 1
+      }
+    }
+    onUpdate({ steps, bankrollCorrente: br, stepCorrente: stepCorr })
+  }
+
+  // Registra step manualmente (per giocate non tracciate dall'app)
+  const registraStepManuale = (idx, dati) => {
+    // dati: { esito, importo, quota, home?, away?, esitoMatch?, bookmaker? }
+    const imp = +Number(dati.importo).toFixed(2)
+    const qt = +Number(dati.quota).toFixed(2)
+    const vinc = +(imp * qt).toFixed(2)
+    const match = dati.home ? {
+      home: dati.home, away: dati.away || '', esito: dati.esitoMatch || '',
+      bookmaker: dati.bookmaker || '', quota: qt, importo: imp,
+    } : null
+    const steps = scalata.steps.map((s, i) => i === idx ? {
+      ...s, done: true, esito: dati.esito,
+      timestamp: new Date().toISOString(),
+      matchUsato: match, matchScelto: null,
+      importoEffettivo: imp, quotaEffettiva: qt, vincitaEffettiva: vinc,
+    } : s)
+    // Ricalcola bankroll
+    let br = scalata.capitale
+    let stepCorr = 0
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i]
+      if (s.done) {
+        const i2 = s.importoEffettivo ?? s.importo
+        const q2 = s.quotaEffettiva ?? s.quota
+        if (s.esito === 'vinto') br = +(br - i2 + i2 * q2).toFixed(2)
+        else if (s.esito === 'perso') br = +(br - i2).toFixed(2)
+        stepCorr = i + 1
+      }
+    }
+    onUpdate({ steps, bankrollCorrente: br, stepCorrente: stepCorr })
   }
 
   const abbandona = () => {
@@ -718,13 +811,21 @@ function SchermataAttiva({ scalata, tutte, apertaIdx, saveStatus, onBack, onUpda
             partite={scalata.partiteConsigliate || []}
             step={stepAttuale}
             onSelect={piazzaPartita}
+            onRefresh={() => refreshPartite(scalata.bankrollCorrente)}
+            refreshing={refreshing}
+            refreshError={refreshError}
           />
         )}
 
-        {/* ─── SEZIONE: STEP PASSATI ────────────────────────────────── */}
-        {stepFatti.length > 0 && (
-          <SezioneStepPassati steps={stepFatti} />
-        )}
+        {/* ─── SEZIONE: TUTTI GLI STEP (editabili) ─────────────────── */}
+        <SezioneStepEditor
+          steps={scalata.steps}
+          stepCorrente={stepIdx}
+          capitale={scalata.capitale}
+          onModifica={modificaStep}
+          onReset={resetStep}
+          onRegistraManuale={registraStepManuale}
+        />
 
         {/* Abbandona */}
         <button onClick={abbandona}
@@ -850,7 +951,7 @@ function SchedinaStep({ step, stepIdx, onRegistraEsito, onPiazzaPartita, onAnnul
 }
 
 // ─── PARTITE CONSIGLIATE ─────────────────────────────────────────────────────
-function SezionePartiteAI({ partite, step, onSelect }) {
+function SezionePartiteAI({ partite, step, onSelect, onRefresh, refreshing, refreshError }) {
   const [selIdx, setSelIdx] = useState(null)
   const [importoEdit, setImportoEdit] = useState(step.importo)
   const [quotaEdit, setQuotaEdit] = useState(step.quota)
@@ -864,26 +965,50 @@ function SezionePartiteAI({ partite, step, onSelect }) {
     }
   }, [selIdx])
 
-  if (partite.length === 0) return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ ...T.sg, fontSize: 10, letterSpacing: 2, color: 'rgba(245,240,232,0.3)', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8 }}>
-        ⚡ Partite consigliate
-      </div>
-      <div style={{ padding: '32px 20px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 12 }}>
-        <div style={{ width: 28, height: 28, borderRadius: '50%', border: `2px solid ${T.cyan}18`, borderTop: `2px solid ${T.cyan}`, animation: 'spin 1s linear infinite', margin: '0 auto 12px' }}/>
-        <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.35)' }}>Analizzo le partite...</div>
-      </div>
-    </div>
-  )
-
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <div style={{ ...T.sg, fontSize: 10, letterSpacing: 2, color: 'rgba(245,240,232,0.3)', textTransform: 'uppercase', fontWeight: 700 }}>
-          ⚡ Partite consigliate
+          ⚡ Partite consigliate {partite.length > 0 && <span style={{ color: 'rgba(245,240,232,0.2)', fontWeight: 400 }}>· {partite.length} opzioni</span>}
         </div>
-        <div style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.2)' }}>{partite.length} opzioni</div>
+        <button onClick={onRefresh} disabled={refreshing}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '5px 10px', borderRadius: 8,
+            background: refreshing ? `${T.cyan}08` : `${T.cyan}12`,
+            border: `1px solid ${T.cyan}30`,
+            color: T.cyan, ...T.sg, fontSize: 10, fontWeight: 600,
+            cursor: refreshing ? 'wait' : 'pointer', letterSpacing: 1,
+          }}>
+          {refreshing
+            ? <><div style={{ width: 8, height: 8, borderRadius: '50%', border: `1.5px solid ${T.cyan}40`, borderTop: `1.5px solid ${T.cyan}`, animation: 'spin 0.8s linear infinite' }}/> Carico...</>
+            : <>🔄 Aggiorna</>
+          }
+        </button>
       </div>
+
+      {refreshError && (
+        <div style={{ padding: '10px 12px', background: `${T.red}08`, border: `1px solid ${T.red}30`, borderRadius: 10, marginBottom: 10, ...T.sg, fontSize: 11, color: T.red }}>
+          ⚠ {refreshError}
+        </div>
+      )}
+
+      {partite.length === 0 ? (
+        <div style={{ padding: '32px 20px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: 12 }}>
+          {refreshing ? (
+            <>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', border: `2px solid ${T.cyan}18`, borderTop: `2px solid ${T.cyan}`, animation: 'spin 1s linear infinite', margin: '0 auto 12px' }}/>
+              <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.35)' }}>Analizzo le partite...</div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 28, marginBottom: 8, opacity: 0.2 }}>📭</div>
+              <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.35)' }}>Nessuna partita disponibile</div>
+              <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.2)', marginTop: 4 }}>Tap "Aggiorna" qui sopra</div>
+            </>
+          )}
+        </div>
+      ) : (
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {partite.map((p, i) => {
@@ -967,53 +1092,216 @@ function SezionePartiteAI({ partite, step, onSelect }) {
           )
         })}
       </div>
+      )}
     </div>
   )
 }
 
-// ─── STEP PASSATI (accordion) ────────────────────────────────────────────────
-function SezioneStepPassati({ steps }) {
+// ─── EDITOR STEP COMPLETO (modificabili, registrabili manualmente) ──────────
+function SezioneStepEditor({ steps, stepCorrente, capitale, onModifica, onReset, onRegistraManuale }) {
+  const [openIdx, setOpenIdx] = useState(null)
+  const stepFatti = steps.filter(s => s.done)
+  const stepDaRegistrare = steps.slice(0, stepCorrente).filter(s => !s.done) // step "saltati"
+
   return (
-    <details style={{ marginBottom: 16 }}>
-      <summary style={{
-        cursor: 'pointer', padding: '10px 14px',
-        background: 'rgba(255,255,255,0.02)', borderRadius: 10,
-        ...T.sg, fontSize: 11, color: 'rgba(245,240,232,0.4)', letterSpacing: 1, listStyle: 'none',
-      }}>
-        📋 STEP PASSATI ({steps.length})
-      </summary>
-      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {steps.map((s, j) => {
-          const isV = s.esito === 'vinto'
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ ...T.sg, fontSize: 10, letterSpacing: 2, color: 'rgba(245,240,232,0.3)', textTransform: 'uppercase', fontWeight: 700, marginBottom: 10 }}>
+        📋 Tutti gli step
+      </div>
+
+      {/* Step saltati che vanno registrati */}
+      {stepDaRegistrare.length > 0 && (
+        <div style={{ marginBottom: 12, padding: '12px 14px', background: `${T.gold}06`, border: `1px solid ${T.gold}25`, borderRadius: 12 }}>
+          <div style={{ ...T.sg, fontSize: 11, color: T.gold, fontWeight: 700, marginBottom: 6 }}>
+            ⚠ {stepDaRegistrare.length} step da registrare
+          </div>
+          <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.4)', lineHeight: 1.4 }}>
+            Hai step non registrati. Clicca su uno step qui sotto per inserire i dati reali della giocata fatta.
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {steps.map((s, idx) => {
+          const isOpen = openIdx === idx
+          const isFatto = s.done
+          const isSaltato = !isFatto && idx < stepCorrente
+          const isCorrente = idx === stepCorrente
+          const isFuturo = idx > stepCorrente
+
           const importo = s.importoEffettivo ?? s.importo
           const quota = s.quotaEffettiva ?? s.quota
           const vincita = s.vincitaEffettiva ?? s.vincita
-          const delta = isV ? vincita - importo : -importo
+
+          let bg, bd, label, icon
+          if (isFatto) {
+            const isV = s.esito === 'vinto'
+            bg = isV ? `${T.green}06` : `${T.red}06`
+            bd = isV ? `${T.green}25` : `${T.red}25`
+            label = isV ? 'VINTO' : 'PERSO'
+            icon = isV ? '✓' : '✗'
+          } else if (isSaltato) {
+            bg = `${T.gold}06`; bd = `${T.gold}25`
+            label = 'NON REGISTRATO'; icon = '⚠'
+          } else if (isCorrente) {
+            bg = `${T.cyan}06`; bd = `${T.cyan}25`
+            label = 'IN CORSO'; icon = '▸'
+          } else {
+            bg = 'rgba(255,255,255,0.02)'; bd = 'rgba(255,255,255,0.05)'
+            label = 'FUTURO'; icon = '·'
+          }
+
+          const editable = isFatto || isSaltato
+
           return (
-            <div key={j} style={{
-              padding: '10px 14px',
-              background: isV ? `${T.green}05` : `${T.red}05`,
-              border: `1px solid ${isV ? T.green + '20' : T.red + '20'}`,
-              borderRadius: 10,
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ ...T.sg, fontSize: 12, color: 'rgba(245,240,232,0.7)' }}>
-                  <span style={{ color: isV ? T.green : T.red, marginRight: 8 }}>{isV ? '✓' : '✗'}</span>
-                  Step {s.step} · {fmt(importo)} × {quota}
+            <div key={idx} style={{ background: bg, border: `1px solid ${bd}`, borderRadius: 10, opacity: isFuturo ? 0.4 : 1 }}>
+              <div onClick={() => editable && setOpenIdx(isOpen ? null : idx)}
+                style={{ padding: '10px 14px', cursor: editable ? 'pointer' : 'default', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ ...T.orb, fontSize: 12, color: 'rgba(245,240,232,0.4)', minWidth: 20 }}>
+                    {icon}
+                  </div>
+                  <div>
+                    <div style={{ ...T.sg, fontSize: 12, fontWeight: 600, color: 'rgba(245,240,232,0.7)' }}>
+                      Step {s.step} · {fmt(importo)} × {quota}
+                    </div>
+                    {s.matchUsato?.home && (
+                      <div style={{ ...T.sg, fontSize: 9, color: 'rgba(245,240,232,0.3)', marginTop: 2 }}>
+                        {s.matchUsato.home} vs {s.matchUsato.away}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div style={{ ...T.orb, fontSize: 12, color: isV ? T.green : T.red, fontWeight: 700 }}>
-                  {delta >= 0 ? '+' : ''}{fmt(delta)}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                  <div style={{ ...T.sg, fontSize: 8, padding: '2px 6px', borderRadius: 99, background: bd, color: 'rgba(245,240,232,0.7)', fontWeight: 700, letterSpacing: 1 }}>{label}</div>
+                  {isFatto && (
+                    <div style={{ ...T.orb, fontSize: 11, color: s.esito === 'vinto' ? T.green : T.red, fontWeight: 700 }}>
+                      {s.esito === 'vinto' ? '+' : ''}{fmt(s.esito === 'vinto' ? vincita - importo : -importo)}
+                    </div>
+                  )}
+                  {editable && <div style={{ ...T.sg, fontSize: 8, color: 'rgba(245,240,232,0.3)' }}>{isOpen ? '▼' : '▸'} edit</div>}
                 </div>
               </div>
-              {s.matchUsato && (
-                <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.3)', marginTop: 3 }}>
-                  {s.matchUsato.home} vs {s.matchUsato.away} · {s.matchUsato.esito}
-                </div>
+
+              {isOpen && editable && (
+                <StepEditForm
+                  step={s}
+                  stepIdx={idx}
+                  isSaltato={isSaltato}
+                  onSave={(dati) => {
+                    if (isSaltato) onRegistraManuale(idx, dati)
+                    else onModifica(idx, {
+                      esito: dati.esito,
+                      importoEffettivo: +Number(dati.importo).toFixed(2),
+                      quotaEffettiva: +Number(dati.quota).toFixed(2),
+                      matchUsato: dati.home ? { home: dati.home, away: dati.away, esito: dati.esitoMatch, bookmaker: dati.bookmaker, quota: +Number(dati.quota).toFixed(2), importo: +Number(dati.importo).toFixed(2) } : s.matchUsato,
+                    })
+                    setOpenIdx(null)
+                  }}
+                  onReset={() => { onReset(idx); setOpenIdx(null) }}
+                  onCancel={() => setOpenIdx(null)}
+                />
               )}
             </div>
           )
         })}
       </div>
-    </details>
+    </div>
+  )
+}
+
+// Form di editing per uno step
+function StepEditForm({ step, stepIdx, isSaltato, onSave, onReset, onCancel }) {
+  const [esito, setEsito] = useState(step.esito || 'vinto')
+  const [importo, setImporto] = useState(step.importoEffettivo ?? step.importo)
+  const [quota, setQuota] = useState(step.quotaEffettiva ?? step.quota)
+  const [home, setHome] = useState(step.matchUsato?.home || '')
+  const [away, setAway] = useState(step.matchUsato?.away || '')
+  const [esitoMatch, setEsitoMatch] = useState(step.matchUsato?.esito || '')
+  const [bookmaker, setBookmaker] = useState(step.matchUsato?.bookmaker || '')
+
+  return (
+    <div style={{ padding: '12px 14px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+      <div style={{ ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.4)', marginBottom: 10 }}>
+        {isSaltato ? '⚠ Inserisci i dati della giocata effettivamente fatta' : '✏️ Modifica i dati di questo step'}
+      </div>
+
+      {/* Esito */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+        <button onClick={() => setEsito('vinto')}
+          style={{
+            padding: '10px', borderRadius: 8,
+            background: esito === 'vinto' ? `${T.green}20` : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${esito === 'vinto' ? T.green + '60' : 'rgba(255,255,255,0.06)'}`,
+            color: esito === 'vinto' ? T.green : 'rgba(245,240,232,0.4)',
+            ...T.sg, fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: 1,
+          }}>
+          ✓ VINTO
+        </button>
+        <button onClick={() => setEsito('perso')}
+          style={{
+            padding: '10px', borderRadius: 8,
+            background: esito === 'perso' ? `${T.red}20` : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${esito === 'perso' ? T.red + '60' : 'rgba(255,255,255,0.06)'}`,
+            color: esito === 'perso' ? T.red : 'rgba(245,240,232,0.4)',
+            ...T.sg, fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: 1,
+          }}>
+          ✗ PERSO
+        </button>
+      </div>
+
+      {/* Importo + Quota */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div>
+          <div style={{ ...T.label, marginBottom: 4 }}>Importo (€)</div>
+          <input type="number" step="0.01" value={importo} onChange={e => setImporto(e.target.value)}
+            style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px', textAlign: 'center' }} />
+        </div>
+        <div>
+          <div style={{ ...T.label, marginBottom: 4 }}>Quota</div>
+          <input type="number" step="0.01" value={quota} onChange={e => setQuota(e.target.value)}
+            style={{ ...T.input, ...T.orb, fontSize: 16, padding: '8px 12px', textAlign: 'center' }} />
+        </div>
+      </div>
+
+      {/* Partita (opzionale) */}
+      <details style={{ marginBottom: 10 }}>
+        <summary style={{ cursor: 'pointer', ...T.sg, fontSize: 10, color: 'rgba(245,240,232,0.35)', padding: '4px 0', listStyle: 'none' }}>
+          ▸ Dettagli partita (opzionale)
+        </summary>
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            <input type="text" value={home} onChange={e => setHome(e.target.value)} placeholder="Casa"
+              style={{ ...T.input, ...T.sg, fontSize: 12, padding: '7px 10px' }} />
+            <input type="text" value={away} onChange={e => setAway(e.target.value)} placeholder="Trasferta"
+              style={{ ...T.input, ...T.sg, fontSize: 12, padding: '7px 10px' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            <input type="text" value={esitoMatch} onChange={e => setEsitoMatch(e.target.value)} placeholder="Es: Vittoria casa, Over 2.5..."
+              style={{ ...T.input, ...T.sg, fontSize: 12, padding: '7px 10px' }} />
+            <input type="text" value={bookmaker} onChange={e => setBookmaker(e.target.value)} placeholder="Bookmaker"
+              style={{ ...T.input, ...T.sg, fontSize: 12, padding: '7px 10px' }} />
+          </div>
+        </div>
+      </details>
+
+      {/* Bottoni */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={() => onSave({ esito, importo, quota, home, away, esitoMatch, bookmaker })}
+          style={{ flex: 2, padding: '10px', background: `${T.cyan}20`, border: `1px solid ${T.cyan}50`, borderRadius: 8, color: T.cyan, ...T.sg, fontSize: 12, fontWeight: 700, cursor: 'pointer', letterSpacing: 1 }}>
+          {isSaltato ? '✓ Registra' : '✓ Salva modifiche'}
+        </button>
+        {!isSaltato && (
+          <button onClick={onReset}
+            style={{ flex: 1, padding: '10px', background: `${T.red}10`, border: `1px solid ${T.red}30`, borderRadius: 8, color: T.red, ...T.sg, fontSize: 11, cursor: 'pointer' }}>
+            🗑 Reset
+          </button>
+        )}
+        <button onClick={onCancel}
+          style={{ flex: 1, padding: '10px', background: 'transparent', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, color: 'rgba(245,240,232,0.4)', ...T.sg, fontSize: 11, cursor: 'pointer' }}>
+          Annulla
+        </button>
+      </div>
+    </div>
   )
 }
